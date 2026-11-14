@@ -1,0 +1,11 @@
+{
+  "name": "Házikönyvtár",
+  "short_name": "Könyvtár",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3ee",
+  "theme_color": "#7a4b2a",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7a4b2a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Házikönyvtár</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+
+<!-- Bejelentkezés -->
+<section id="login" class="login hidden">
+  <form id="loginForm" class="login-card">
+    <img src="/static/icon.svg" alt="" width="64" height="64">
+    <h1>Házikönyvtár</h1>
+    <div id="loginUsers" class="login-users"></div>
+    <input id="loginPass" type="password" placeholder="Jelszó" autocomplete="current-password" required>
+    <button class="btn primary" type="submit">Belépés</button>
+    <p id="loginErr" class="err"></p>
+  </form>
+</section>
+
+<!-- Fő nézet -->
+<section id="main" class="hidden">
+  <header class="top">
+    <div class="top-row">
+      <h1 class="brand"><img src="/static/icon.svg" alt="" width="28" height="28"><span>Házikönyvtár</span></h1>
+      <div class="search">
+        <input id="q" type="search" placeholder="Keresés: cím, szerző, címke, leírás…" autocomplete="off" enterkeyhint="search">
+      </div>
+      <button id="menuBtn" class="icon-btn" title="Menü" aria-label="Menü">☰</button>
+    </div>
+    <div class="filters">
+      <div class="seg" id="statusSeg">
+        <button data-v="all" class="on">Mind <small id="cAll"></small></button>
+        <button data-v="owned">Polcon <small id="cOwned"></small></button>
+        <button data-v="wishlist">Kívánságlista <small id="cWish"></small></button>
+      </div>
+      <button id="moreFiltersBtn" class="btn ghost small">Szűrők ▾</button>
+    </div>
+    <div id="moreFilters" class="more-filters hidden">
+      <label>Kié / ki szeretné <select id="fOwner"><option value="">Bárki</option></select></label>
+      <label>Formátum <select id="fFormat"><option value="">Bármely</option></select></label>
+      <label>Hol <select id="fLocation"><option value="">Bárhol</option></select></label>
+      <label>Rendezés
+        <select id="fSort">
+          <option value="">Relevancia / cím</option>
+          <option value="title">Cím (A–Z)</option>
+          <option value="new">Legutóbb felvett</option>
+          <option value="year">Megjelenés éve</option>
+        </select>
+      </label>
+      <label>Címkék
+        <select id="fTagMode">
+          <option value="any">bármelyik címke</option>
+          <option value="all">minden címke</option>
+        </select>
+      </label>
+    </div>
+    <div id="tagChips" class="chips scroll-x"></div>
+  </header>
+
+  <main>
+    <p id="resultInfo" class="result-info"></p>
+    <div id="grid" class="grid"></div>
+    <div class="center"><button id="moreBtn" class="btn ghost hidden">Továbbiak betöltése</button></div>
+  </main>
+
+  <button id="addBtn" class="fab" title="Új könyv" aria-label="Új könyv">＋</button>
+</section>
+
+<!-- Menü -->
+<div id="menu" class="sheet-backdrop hidden">
+  <div class="menu-card">
+    <p class="muted">Bejelentkezve: <b id="whoami"></b></p>
+    <a class="btn ghost block" href="/api/export">Mentés letöltése (JSON)</a>
+    <button id="logoutBtn" class="btn ghost block">Kijelentkezés</button>
+    <button class="btn block" data-close>Bezár</button>
+  </div>
+</div>
+
+<!-- Könyv adatlap -->
+<div id="detail" class="sheet-backdrop hidden">
+  <div class="sheet">
+    <div class="sheet-head">
+      <button class="icon-btn" data-close aria-label="Bezár">←</button>
+      <div class="grow"></div>
+      <button id="editBtn" class="btn small">Szerkesztés</button>
+    </div>
+    <div id="detailBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<!-- Szerkesztő -->
+<div id="editor" class="sheet-backdrop hidden">
+  <div class="sheet">
+    <div class="sheet-head">
+      <button class="icon-btn" data-close aria-label="Bezár">✕</button>
+      <h2 id="editorTitle">Új könyv</h2>
+      <div class="grow"></div>
+      <button id="saveBtn" class="btn primary small" form="bookForm">Mentés</button>
+    </div>
+    <div class="sheet-body">
+      <details id="autoFill" class="autofill" open>
+        <summary>✨ Automatikus kitöltés</summary>
+        <div class="af-row">
+          <input id="afUrl" type="url" placeholder="Könyv linkje (Libri, Bookline, Moly…)" inputmode="url">
+          <button id="afUrlBtn" class="btn small" type="button">Letöltés</button>
+        </div>
+        <div class="af-row">
+          <input id="afIsbn" type="text" placeholder="ISBN szám" inputmode="numeric">
+          <button id="afIsbnBtn" class="btn small" type="button">Keresés</button>
+        </div>
+        <div class="af-row">
+          <input id="afTitle" type="text" placeholder="Cím és/vagy szerző">
+          <button id="afTitleBtn" class="btn small" type="button">Keresés</button>
+        </div>
+        <div class="af-row">
+          <label class="btn small file-btn">📷 Borító fotó<input id="afFront" type="file" accept="image/*" capture="environment" hidden></label>
+          <label class="btn small file-btn">📷 Hátoldal / vonalkód<input id="afBack" type="file" accept="image/*" capture="environment" hidden></label>
+        </div>
+        <p id="afStatus" class="af-status"></p>
+        <div id="afCandidates" class="candidates"></div>
+      </details>
+
+      <form id="bookForm" class="form" autocomplete="off">
+        <div class="covers-edit">
+          <div class="cover-slot" data-side="front">
+            <div class="cover-img" id="edFront"><span>Borító</span></div>
+            <div class="slot-actions">
+              <label class="btn tiny">Kép…<input type="file" accept="image/*" data-img="front" hidden></label>
+              <button type="button" class="btn tiny ghost" data-rmimg="front">✕</button>
+            </div>
+          </div>
+          <div class="cover-slot" data-side="back">
+            <div class="cover-img" id="edBack"><span>Hátoldal</span></div>
+            <div class="slot-actions">
+              <label class="btn tiny">Kép…<input type="file" accept="image/*" data-img="back" hidden></label>
+              <button type="button" class="btn tiny ghost" data-rmimg="back">✕</button>
+            </div>
+          </div>
+        </div>
+
+        <label class="full">Cím *<input name="title" required></label>
+        <label class="full">Alcím<input name="subtitle"></label>
+        <label class="full">Szerző(k)
+          <div class="chip-input" data-field="authors"><input list="dlAuthors" placeholder="Név + Enter"></div>
+        </label>
+        <label class="full">Címkék
+          <div class="chip-input" data-field="tags"><input list="dlTags" placeholder="pl. Szépirodalom + Enter"></div>
+        </label>
+        <label>ISBN<input name="isbn" inputmode="numeric"></label>
+        <label>Verzió / kiadás<input name="edition" placeholder="pl. 2. kiadás"></label>
+        <label>Kiadó<input name="publisher" list="dlPublishers"></label>
+        <label>Megjelenés éve<input name="publish_year" type="number" min="1400" max="2100" inputmode="numeric"></label>
+
+        <fieldset class="full">
+          <legend>Formátum</legend>
+          <div id="fmtBoxes" class="checks"></div>
+        </fieldset>
+
+        <fieldset class="full">
+          <legend>Beszerzés</legend>
+          <div class="form inner">
+            <label>Vásárlás éve<input name="purchase_year" type="number" min="1900" max="2100" inputmode="numeric"></label>
+            <label class="check-line"><input type="checkbox" name="wishlist"> Kívánságlistán</label>
+            <label>Kié?<input name="owner" list="dlOwners"></label>
+            <label>Ki szeretné?<input name="wanted_by" list="dlOwners"></label>
+            <label>Hol található?<input name="location" list="dlLocations" placeholder="pl. Nappali polc 2, 3-as doboz"></label>
+            <label>Bolt<input name="shop" list="dlShops"></label>
+            <label>Ár<input name="price" type="number" step="any" min="0" inputmode="decimal"></label>
+            <label>Pénznem<input name="currency" list="dlCurrency" value="HUF"></label>
+            <label class="full">Link<input name="link" type="url" inputmode="url"></label>
+          </div>
+        </fieldset>
+
+        <label class="full">Leírás (hátoldali szöveg)<textarea name="description" rows="6"></textarea></label>
+        <label class="full">Megjegyzés<textarea name="notes" rows="3"></textarea></label>
+
+        <div id="filesSection" class="full hidden">
+          <h3>Digitális fájlok</h3>
+          <div id="edFiles" class="files"></div>
+          <label class="btn small file-btn">⬆ Fájl feltöltése (PDF, EPUB, AZW, MOBI…)<input id="edFileInput" type="file" accept=".pdf,.epub,.azw,.azw3,.mobi,.kfx,.fb2,.djvu,.cbz,.cbr,.txt,.rtf,.doc,.docx,.mp3,.m4b" multiple hidden></label>
+          <p class="muted small">Új könyvnél a fájlokat az első mentés után lehet feltölteni.</p>
+        </div>
+        <p id="pendingFilesNote" class="muted small full hidden"></p>
+
+        <div class="full form-foot">
+          <button id="deleteBtn" type="button" class="btn danger ghost hidden">Könyv törlése</button>
+          <div class="grow"></div>
+          <button class="btn primary" type="submit">Mentés</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Kép nagyítás -->
+<div id="lightbox" class="lightbox hidden"><img alt=""></div>
+
+<div id="toast" class="toast hidden"></div>
+
+<datalist id="dlAuthors"></datalist>
+<datalist id="dlTags"></datalist>
+<datalist id="dlPublishers"></datalist>
+<datalist id="dlOwners"></datalist>
+<datalist id="dlLocations"></datalist>
+<datalist id="dlShops"></datalist>
+<datalist id="dlCurrency"><option>HUF</option><option>EUR</option><option>USD</option><option>GBP</option></datalist>
+
+<script src="/static/app.js?v=1"></script>
+</body>
+</html>

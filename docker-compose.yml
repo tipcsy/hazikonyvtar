@@ -1,0 +1,15 @@
+services:
+  hazikonyvtar:
+    build: .
+    image: hazikonyvtar:latest
+    container_name: hazikonyvtar
+    restart: unless-stopped
+    ports:
+      - "8070:8000"            # http://192.168.31.152:8070
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/data
+    volumes:
+      # Adatbázis, borítók, e-könyv fájlok, mentések
+      - /mnt/truenas_share/Program_Files/hazikonyvtar_data:/data
