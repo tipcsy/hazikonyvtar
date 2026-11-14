@@ -32,39 +32,34 @@ Az automatikus kitöltés **csak az üres mezőket** tölti ki, mentés előtt m
 
 ## Telepítés a szerverre (192.168.31.152)
 
-### 1. Fájlok felmásolása
+A kód a GitHubon van: https://github.com/tipcsy/hazikonyvtar. A szerver a repót egy csak
+olvasásra jogosult **deploy key**-jel éri el (`~/.ssh/hazikonyvtar_deploy`, SSH alias:
+`github-hazikonyvtar`), így privát repóval is működik.
 
-Windowsról (PowerShell vagy Git Bash), a projekt mappájából:
+### Frissítés (a szokásos menet)
+
+1. A változtatásokat a gépeden commitold és pushold a GitHubra (`git push`).
+2. A szerveren:
 
 ```bash
-scp -r app requirements.txt Dockerfile docker-compose.yml .env.example .dockerignore felhasznalo@192.168.31.152:/opt/hazikonyvtar/
+ssh tipcsy@192.168.31.152 /opt/hazikonyvtar/update.sh
 ```
 
-(Ha a `/opt/hazikonyvtar` még nem létezik: `ssh felhasznalo@192.168.31.152 "sudo mkdir -p /opt/hazikonyvtar && sudo chown \$USER /opt/hazikonyvtar"`)
+Ez letölti a legújabb kódot, újraépíti és újraindítja a konténert. A `.env` és az adatok
+(`/mnt/truenas_share/Program_Files/hazikonyvtar_data`) érintetlenek maradnak.
 
-### 2. Beállítás és indítás a szerveren
+### Első telepítés (új szerverre)
 
 ```bash
-ssh felhasznalo@192.168.31.152
+sudo mkdir -p /opt/hazikonyvtar && sudo chown $USER /opt/hazikonyvtar
+git clone git@github-hazikonyvtar:tipcsy/hazikonyvtar.git /opt/hazikonyvtar
 cd /opt/hazikonyvtar
-cp .env.example .env
-nano .env                      # jelszavak megadása (APP_USERS)!
-sudo mkdir -p /mnt/truenas_share/Program_Files/hazikonyvtar_data
+cp .env.example .env && nano .env          # jelszavak megadása (APP_USERS)!
+mkdir -p /mnt/truenas_share/Program_Files/hazikonyvtar_data
 docker compose up -d --build
-docker compose logs -f         # Ctrl+C a kilépéshez
 ```
 
 Ezután helyi hálózatról: **http://192.168.31.152:8070**
-
-### 3. Frissítés később
-
-Fájlok újra felmásolása (1. lépés, a `.env`-et ne írd felül), majd:
-
-```bash
-cd /opt/hazikonyvtar && docker compose up -d --build
-```
-
-Az adatok a `/mnt/truenas_share/Program_Files/hazikonyvtar_data` mappában maradnak.
 
 ## Külső elérés Cloudflare Tunnellel
 
