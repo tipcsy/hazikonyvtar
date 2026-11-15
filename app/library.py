@@ -33,7 +33,7 @@ FORMATS = {".epub": "EPUB", ".mobi": "MOBI", ".azw": "AZW", ".azw3": "AZW3", ".p
            ".rtf": "RTF", ".cbz": "CBZ", ".cbr": "CBR"}
 # Ezeknél a nevű mappáknál lévő fájlokat kihagyjuk (rendszerfájlok)
 # Ha az adatkiolvasás javul, ezt növeld: a következő átvizsgálás mindent újraolvas
-EXTRACT_VERSION = 3
+EXTRACT_VERSION = 4
 SKIP_DIRS = {"@eaDir", ".AppleDouble", "#recycle", ".Trash", "$RECYCLE.BIN", ".git"}
 
 state = {
@@ -353,11 +353,20 @@ def extract(rel: str, path: Path, fmt: str) -> dict:
         fw = {w for a in fauthors for w in norm(a).split() if len(w) > 2}
         if not any(fw & set(norm(a).split()) for a in authors):
             authors = fauthors
-    # "Szerző - Cím" alakú cím tisztítása (szórendtől függetlenül)
-    if " - " in title:
-        first, rest = title.split(" - ", 1)
-        if any(set(norm(first).split()) == set(norm(a).split()) for a in authors):
-            title = rest.strip()
+    # takarítás: "- R. A. Salvatore", szerzőként szereplő cím, "-upByOM" utótagok
+    authors = [a.strip(" -–_.,;") for a in authors]
+    authors = [a for a in authors if a and norm(a) != norm(title)] or [a for a in fauthors if norm(a) != norm(title)]
+    title = _clean_title(title)
+    # "Szerző - Cím" / "asimov isaac utikalauz" alakú cím: a szerző nevének levágása (szórendtől függetlenül)
+    words = title.split()
+    for a in authors:
+        aw = set(norm(a).split())
+        n = len(norm(a).split())
+        if n and len(words) > n and {norm(w) for w in words[:n]} - {""} == aw:
+            title = " ".join(words[n:]).lstrip(" -–:,.")
+            break
+    if title and title == title.lower():
+        title = title[0].upper() + title[1:]
     meta["title"], meta["authors"] = title, authors
     return meta
 
