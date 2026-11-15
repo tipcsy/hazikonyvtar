@@ -455,13 +455,7 @@ def scan():
         if author_fixes:
             n = apply_author_fixes(author_fixes)
             log.info("Javított szerzők %d importált könyvnél", n)
-        with db.connect() as con:
-            con.execute("UPDATE library_files SET missing=0")
-            missing = [r["path"] for r in con.execute("SELECT path FROM library_files") if r["path"] not in seen]
-            for rel in missing:
-                con.execute("UPDATE library_files SET missing=1 WHERE path=?", (rel,))
-            # be nem importált, eltűnt fájlok törlése a listából
-            con.execute("DELETE FROM library_files WHERE missing=1 AND state<>'imported'")
+        handle_missing(seen)
         state["last_scan"] = time.strftime("%Y-%m-%d %H:%M")
         log.info("Könyvtár átvizsgálva: %d fájl", len(found))
     except Exception as e:
@@ -470,6 +464,83 @@ def scan():
     finally:
         state["scanning"] = False
         _scan_lock.release()
+
+
+MAX_MISSING_RATIO = 0.2   # ennél több eltűnt fájlnál (pl. nem elérhető megosztás) nem törlünk semmit
+
+
+def handle_missing(seen: set[str]):
+    """A mappából eltűnt fájlok kezelése.
+    - Áthelyezett/átnevezett fájl (azonos név+méret, vagy azonos méret+mappa): a könyv átkerül az új útvonalra.
+    - Törölt fájl: lekerül a könyvről; ha a könyvnek így nem marad fájlja és papíron sincs meg, a könyv is törlődik.
+    - Biztonsági fék: ha a könyvtár üresnek látszik vagy túl sok fájl tűnt el, semmit nem töröl."""
+    removed_books = 0
+    with db.write() as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM library_files")]
+        gone = [r for r in rows if r["path"] not in seen]
+        imported_total = sum(1 for r in rows if r["state"] == "imported")
+        gone_imported = [r for r in gone if r["state"] == "imported"]
+        # be nem importált, eltűnt fájlok egyszerűen kikerülnek a listából
+        for r in gone:
+            if r["state"] != "imported":
+                con.execute("DELETE FROM library_files WHERE id=?", (r["id"],))
+        if not gone_imported:
+            con.execute("UPDATE library_files SET missing=0")
+            return
+        if not seen or len(gone_imported) > max(5, imported_total * MAX_MISSING_RATIO):
+            for r in gone_imported:
+                con.execute("UPDATE library_files SET missing=1 WHERE id=?", (r["id"],))
+            state["scan_error"] = (f"{len(gone_imported)} importált fájl nem található - a megosztás talán nem "
+                                   f"elérhető, ezért nem töröltem semmit. Ha szándékos, töröld a könyveket kézzel.")
+            log.warning(state["scan_error"])
+            return
+        # áthelyezés/átnevezés: új (még nem importált) fájl azonos névvel+mérettel, vagy azonos mérettel ugyanott
+        fresh = [r for r in rows if r["path"] in seen and r["state"] == "new"]
+        for r in gone_imported:
+            match = next((f for f in fresh if f["name"] == r["name"] and f["size"] == r["size"]), None)
+            if not match:
+                # átnevezve és/vagy áthelyezve: bájtra azonos méret + formátum, ha egyértelmű
+                same = [f for f in fresh if f["size"] == r["size"] and f["format"] == r["format"]]
+                match = same[0] if len(same) == 1 else None
+            if match:
+                fresh.remove(match)
+                con.execute("UPDATE book_files SET path=?, orig_name=? WHERE id=?",
+                            (match["path"], match["name"], r["book_file_id"]))
+                con.execute("UPDATE library_files SET state='imported', book_file_id=? WHERE id=?",
+                            (r["book_file_id"], match["id"]))
+                con.execute("DELETE FROM library_files WHERE id=?", (r["id"],))
+                log.info("Áthelyezett fájl: %s -> %s", r["path"], match["path"])
+                continue
+            # tényleg törölték
+            con.execute("DELETE FROM library_files WHERE id=?", (r["id"],))
+            bf = con.execute("SELECT book_id FROM book_files WHERE id=?", (r["book_file_id"],)).fetchone()
+            if not bf:
+                continue
+            book_id = bf[0]
+            con.execute("DELETE FROM book_files WHERE id=?", (r["book_file_id"],))
+            b = con.execute("SELECT formats, cover_path, back_path FROM books WHERE id=?", (book_id,)).fetchone()
+            if not b:
+                continue
+            left = [x[0] for x in con.execute("SELECT format FROM book_files WHERE book_id=?", (book_id,))]
+            fmts = [f for f in (b["formats"] or "").split(",") if f]
+            if not left and "Papír" not in fmts:
+                con.execute("DELETE FROM books WHERE id=?", (book_id,))
+                db.reindex_book(con, book_id)
+                for rel in (b["cover_path"], b["back_path"]):
+                    if rel:
+                        for p in (db.DATA_DIR / rel, db.DATA_DIR / rel.replace(".jpg", "_t.jpg")):
+                            p.unlink(missing_ok=True)
+                removed_books += 1
+            else:
+                keep = [f for f in fmts if f == "Papír" or f in left or f not in FORMATS.values()]
+                con.execute("UPDATE books SET formats=?, updated_at=datetime('now') WHERE id=?",
+                            (",".join(keep), book_id))
+                db.reindex_book(con, book_id)
+        con.execute("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM book_authors)")
+        con.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM book_tags)")
+        con.execute("UPDATE library_files SET missing=0")
+    if removed_books:
+        log.info("A mappából törölt fájlok miatt %d könyv lekerült a listáról", removed_books)
 
 
 def set_book_authors(con, book_id: int, authors: list[str]):
