@@ -33,7 +33,7 @@ FORMATS = {".epub": "EPUB", ".mobi": "MOBI", ".azw": "AZW", ".azw3": "AZW3", ".p
            ".rtf": "RTF", ".cbz": "CBZ", ".cbr": "CBR"}
 # Ezeknél a nevű mappáknál lévő fájlokat kihagyjuk (rendszerfájlok)
 # Ha az adatkiolvasás javul, ezt növeld: a következő átvizsgálás mindent újraolvas
-EXTRACT_VERSION = 2
+EXTRACT_VERSION = 3
 SKIP_DIRS = {"@eaDir", ".AppleDouble", "#recycle", ".Trash", "$RECYCLE.BIN", ".git"}
 
 state = {
@@ -346,10 +346,10 @@ def extract(rel: str, path: Path, fmt: str) -> dict:
     authors = [a for a in (meta.get("authors") or [])
                if a and len(norm(a)) > 2 and re.search(r"[A-Za-zÀ-ž]", a) and not JUNK_AUTHOR.search(norm(a))]
     authors = [_flip_name(a) for a in authors] or fauthors
-    # PDF-nél a beágyazott szerző gyakran a feltöltő/szkennelő: ha a mappa egy szerző nevét
-    # viseli, és nincs átfedés, a mappa nyer
+    # A beágyazott "szerző" gyakran a fordító/szkennelő: ha a mappa egy szerző nevét viseli,
+    # és nincs átfedés, a mappa/fájlnév szerinti szerző nyer
     top = rel.split("/")[0] if "/" in rel else ""
-    if fmt == "PDF" and top and not top.startswith("--") and fauthors:
+    if top and not top.startswith("--") and fauthors:
         fw = {w for a in fauthors for w in norm(a).split() if len(w) > 2}
         if not any(fw & set(norm(a).split()) for a in authors):
             authors = fauthors
