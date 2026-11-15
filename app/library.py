@@ -402,7 +402,7 @@ def group_key(dir_: str, title: str, authors: list[str]) -> str:
     return f"{dir_}|{norm(title)}"
 
 
-def scan():
+def scan(force_missing: bool = False):
     """A teljes mappa átvizsgálása (háttérszálon). Csak a változott fájlokat olvassa újra."""
     if not enabled():
         state["scan_error"] = "A könyvtár mappa nincs beállítva vagy nem elérhető (LIBRARY_DIR)."
@@ -455,7 +455,7 @@ def scan():
         if author_fixes:
             n = apply_author_fixes(author_fixes)
             log.info("Javított szerzők %d importált könyvnél", n)
-        handle_missing(seen)
+        handle_missing(seen, force=force_missing)
         state["last_scan"] = time.strftime("%Y-%m-%d %H:%M")
         log.info("Könyvtár átvizsgálva: %d fájl", len(found))
     except Exception as e:
@@ -469,7 +469,7 @@ def scan():
 MAX_MISSING_RATIO = 0.2   # ennél több eltűnt fájlnál (pl. nem elérhető megosztás) nem törlünk semmit
 
 
-def handle_missing(seen: set[str]):
+def handle_missing(seen: set[str], force: bool = False):
     """A mappából eltűnt fájlok kezelése.
     - Áthelyezett/átnevezett fájl (azonos név+méret, vagy azonos méret+mappa): a könyv átkerül az új útvonalra.
     - Törölt fájl: lekerül a könyvről; ha a könyvnek így nem marad fájlja és papíron sincs meg, a könyv is törlődik.
@@ -487,11 +487,11 @@ def handle_missing(seen: set[str]):
         if not gone_imported:
             con.execute("UPDATE library_files SET missing=0")
             return
-        if not seen or len(gone_imported) > max(5, imported_total * MAX_MISSING_RATIO):
+        if not seen or (not force and len(gone_imported) > max(5, imported_total * MAX_MISSING_RATIO)):
             for r in gone_imported:
                 con.execute("UPDATE library_files SET missing=1 WHERE id=?", (r["id"],))
             state["scan_error"] = (f"{len(gone_imported)} importált fájl nem található - a megosztás talán nem "
-                                   f"elérhető, ezért nem töröltem semmit. Ha szándékos, töröld a könyveket kézzel.")
+                                   f"elérhető, ezért nem töröltem semmit. Ha szándékosan törölted őket, nyomd meg a Törlés jóváhagyása gombot.")
             log.warning(state["scan_error"])
             return
         # áthelyezés/átnevezés: új (még nem importált) fájl azonos névvel+mérettel, vagy azonos mérettel ugyanott
@@ -594,8 +594,8 @@ def _save_batch(batch):
             """, row)
 
 
-def start_scan():
-    threading.Thread(target=scan, daemon=True).start()
+def start_scan(force_missing: bool = False):
+    threading.Thread(target=scan, kwargs={"force_missing": force_missing}, daemon=True).start()
 
 
 def counts() -> dict:

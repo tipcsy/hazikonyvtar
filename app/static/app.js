@@ -896,6 +896,11 @@ $("#scanBtn").onclick = async () => {
   try { await api("/api/library/scan", { method: "POST" }); pollImport(); }
   catch (e) { toast(e.message, true); }
 };
+$("#forceBtn").onclick = async () => {
+  if (!confirm("A mappából eltűnt fájlokhoz tartozó könyvek lekerülnek a listáról (a papíron is meglévők maradnak). Biztosan?")) return;
+  try { await api("/api/library/scan?force_missing=1", { method: "POST" }); pollImport(); }
+  catch (e) { toast(e.message, true); }
+};
 $("#impHide").onclick = async () => {
   const ids = imp.groups.filter((g) => imp.sel.has(g.key)).flatMap((g) => g.files.map((f) => f.id));
   if (!ids.length) return;
@@ -936,6 +941,8 @@ async function pollImport() {
   if (imp.wasBusy && !busy) { await loadImport(); await loadMeta(); await search(); toast("Kész ✓"); }
   imp.wasBusy = busy;
   $("#scanBtn").disabled = busy; $("#impGo").disabled = busy || !imp.sel.size;
+  $("#forceBtn").classList.toggle("hidden", busy || !s.missing);
+  $("#forceBtn").textContent = `🗑 Törlés jóváhagyása (${s.missing} fájl)`;
   if (!$("#importer").classList.contains("hidden")) imp.timer = setTimeout(pollImport, busy ? 1500 : 8000);
 }
 

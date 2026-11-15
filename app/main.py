@@ -853,10 +853,11 @@ def library_status(user: str = Depends(current_user)):
 
 
 @app.post("/api/library/scan")
-def library_scan(user: str = Depends(current_user)):
+def library_scan(force_missing: int = 0, user: str = Depends(current_user)):
+    """force_missing=1: a biztonsági fék ellenére is töröl (sok szándékosan törölt fájl)."""
     if not library.enabled():
         raise HTTPException(400, "A könyvtár mappa nincs beállítva (LIBRARY_DIR)")
-    library.start_scan()
+    library.start_scan(force_missing=bool(force_missing))
     return {"ok": True}
 
 
