@@ -527,8 +527,8 @@ def cover_for(path: Path, fmt: str) -> bytes | None:
     return None
 
 
-def run_import(items: list[dict], owner: str | None, user: str, save_image, set_relations):
-    """items: [{file_ids:[..], title:str, authors:[..]}]"""
+def run_import(items: list[dict], owner: str | None, user: str, save_image, set_relations, on_done=None):
+    """items: [{file_ids:[..], title:str, authors:[..]}]; on_done: import után hívódik (pl. leírás-kiegészítés)"""
     if not _import_lock.acquire(blocking=False):
         raise RuntimeError("Már fut egy importálás")
     state.update(importing=True, import_done=0, import_total=len(items), import_error=None)
@@ -545,6 +545,11 @@ def run_import(items: list[dict], owner: str | None, user: str, save_image, set_
         finally:
             state["importing"] = False
             _import_lock.release()
+        if on_done:
+            try:
+                on_done()
+            except Exception as e:
+                log.info("Import utáni lépés: %s", e)
 
     threading.Thread(target=work, daemon=True).start()
 
@@ -585,7 +590,7 @@ def _import_one(it: dict, owner, user, save_image, set_relations):
             cur = con.execute("""INSERT INTO books(title, isbn, publisher, publish_year, description, formats,
                                  wishlist, owner, location, created_by) VALUES (?,?,?,?,?,?,0,?,?,?)""",
                               (title, meta.get("isbn"), meta.get("publisher"), meta.get("publish_year"),
-                               meta.get("description"), ",".join(fmts), owner, "E-könyvtár", user))
+                               meta.get("description"), ",".join(fmts), owner, "Szerveren", user))
             book_id = cur.lastrowid
             set_relations(con, book_id, authors, tags)
             created = True
@@ -616,8 +621,10 @@ def _import_one(it: dict, owner, user, save_image, set_relations):
 
 
 def release_files(con, book_file_ids: list[int]):
-    """Ha egy könyvet/fájlt törölnek, a könyvtár-fájl újra importálható lesz."""
+    """Ha egy könyvet/fájlt törölnek, a könyvtár-fájl az "Elrejtett" fülre kerül
+    (nem jelenik meg újra az új fájlok között, de onnan visszaállítható és újra importálható)."""
     if not book_file_ids:
         return
     ph = ",".join("?" * len(book_file_ids))
-    con.execute(f"UPDATE library_files SET state='new', book_file_id=NULL WHERE book_file_id IN ({ph})", book_file_ids)
+    con.execute(f"UPDATE library_files SET state='ignored', book_file_id=NULL WHERE book_file_id IN ({ph})",
+                book_file_ids)

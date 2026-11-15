@@ -147,6 +147,12 @@ def _migrate(con):
     if "source" not in cols:
         # 'upload' = feltöltött fájl a DATA_DIR-ben, 'library' = a közös Könyvek mappában
         con.execute("ALTER TABLE book_files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+    # a közös mappából importált könyvek helye: "Szerveren" (régebben "E-könyvtár")
+    con.execute("UPDATE books SET location='Szerveren' WHERE location='E-könyvtár'")
+    bcols = {r[1] for r in con.execute("PRAGMA table_info(books)")}
+    if "enriched_at" not in bcols:
+        # mikor próbálta az automatikus kiegészítő (csak egyszer próbálkozik könyvenként)
+        con.execute("ALTER TABLE books ADD COLUMN enriched_at TEXT")
 
 
 def init_db():

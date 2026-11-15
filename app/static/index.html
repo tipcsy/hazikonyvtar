@@ -9,7 +9,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon.svg">
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 
@@ -39,11 +39,14 @@
       <div class="seg" id="statusSeg">
         <button data-v="all" class="on">Mind <small id="cAll"></small></button>
         <button data-v="owned">Polcon <small id="cOwned"></small></button>
+        <button data-v="server" id="segServer">Szerveren <small id="cServer"></small></button>
         <button data-v="wishlist">Kívánságlista <small id="cWish"></small></button>
       </div>
       <button id="moreFiltersBtn" class="btn ghost small">Szűrők ▾</button>
+      <span id="authorChip" class="chip on hidden" title="Szerző szűrő törlése"></span>
     </div>
     <div id="moreFilters" class="more-filters hidden">
+      <label>Szerző <input id="fAuthor" list="dlAuthors" placeholder="pl. Stephen King" autocomplete="off"></label>
       <label>Kié / ki szeretné <select id="fOwner"><option value="">Bárki</option></select></label>
       <label>Formátum <select id="fFormat"><option value="">Bármely</option></select></label>
       <label>Hol <select id="fLocation"><option value="">Bárhol</option></select></label>
@@ -103,6 +106,8 @@
   <div class="menu-card">
     <p class="muted">Bejelentkezve: <b id="whoami"></b></p>
     <button id="importBtn" class="btn ghost block hidden">📂 E-könyvek importálása a mappából <span id="importBadge" class="pill"></span></button>
+    <button id="enrichBtn" class="btn ghost block">✨ Hiányzó leírások kitöltése <span id="enrichBadge" class="pill"></span></button>
+    <p id="enrichStatus" class="muted small"></p>
     <a class="btn ghost block" href="/api/export">Mentés letöltése (JSON)</a>
     <button id="logoutBtn" class="btn ghost block">Kijelentkezés</button>
     <button class="btn block" data-close>Bezár</button>
@@ -271,6 +276,6 @@
 <datalist id="dlShops"></datalist>
 <datalist id="dlCurrency"><option>HUF</option><option>EUR</option><option>USD</option><option>GBP</option></datalist>
 
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import db, library, metadata
+from . import db, enrich, library, metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -51,6 +51,8 @@ FORMATS = ["Papír", "EPUB", "AZW3", "AZW", "MOBI", "PRC", "PDF", "FB2", "DOC", 
 # böngészőben olvasható formátumok (EPUB: beépített olvasó, PDF: a böngésző saját nézője)
 READABLE = {"EPUB", "PDF"}
 LIBRARY_SCAN_HOURS = float(os.environ.get("LIBRARY_SCAN_HOURS", "6"))
+# "Szerveren" csoport: azok a könyvek, amelyeknek van fájlja a közös Könyvek mappában
+ON_SERVER = "SELECT book_id FROM book_files WHERE source='library'"
 EBOOK_EXT = {".pdf": "PDF", ".epub": "EPUB", ".azw": "AZW", ".azw3": "AZW3", ".mobi": "MOBI",
              ".kfx": "KFX", ".fb2": "FB2", ".djvu": "DJVU", ".cbz": "CBZ", ".cbr": "CBR",
              ".txt": "TXT", ".rtf": "RTF", ".doc": "DOC", ".docx": "DOCX",
@@ -255,9 +257,10 @@ def meta(user: str = Depends(current_user)):
             "SELECT DISTINCT owner FROM books WHERE owner IS NOT NULL AND owner<>''")]
         publishers = [r[0] for r in con.execute(
             "SELECT DISTINCT publisher FROM books WHERE publisher IS NOT NULL AND publisher<>''")]
-        c = con.execute("SELECT COUNT(*), COALESCE(SUM(wishlist=0),0), COALESCE(SUM(wishlist=1),0) "
-                        "FROM books").fetchone()
-        counts = {"all": c[0], "owned": c[1], "wishlist": c[2]}
+        c = con.execute(f"""SELECT COUNT(*),
+              COALESCE(SUM(wishlist=0 AND (id NOT IN ({ON_SERVER}) OR (',' || formats || ',') LIKE '%,Papír,%')),0),
+              COALESCE(SUM(wishlist=1),0), COALESCE(SUM(id IN ({ON_SERVER})),0) FROM books""").fetchone()
+        counts = {"all": c[0], "owned": c[1], "wishlist": c[2], "server": c[3]}
     owners = list(dict.fromkeys(OWNERS + sorted(owners_db, key=sort_key)))
     return {
         "user": user,
@@ -278,7 +281,7 @@ def meta(user: str = Depends(current_user)):
 @app.get("/api/books")
 def list_books(q: str = "", tags: str = "", tag_mode: str = "any", status: str = "all",
                owner: str = "", fmt: str = "", location: str = "", sort: str = "",
-               read: str = "", min_rating: float = 0, rmode: str = "mine",
+               read: str = "", min_rating: float = 0, rmode: str = "mine", author: str = "",
                limit: int = 60, offset: int = 0, user: str = Depends(current_user)):
     where, args = [], []
     rank = {}
@@ -322,7 +325,14 @@ def list_books(q: str = "", tags: str = "", tag_mode: str = "any", status: str =
         if status == "wishlist":
             where.append("b.wishlist=1")
         elif status == "owned":
-            where.append("b.wishlist=0")
+            # Polcon: a fizikai könyvek (a szerveren lévő e-könyvek külön csoport, kivéve ha papíron is megvan)
+            where.append(f"b.wishlist=0 AND (b.id NOT IN ({ON_SERVER}) OR (',' || b.formats || ',') LIKE '%,Papír,%')")
+        elif status == "server":
+            where.append(f"b.id IN ({ON_SERVER})")
+        if author.strip():
+            where.append("b.id IN (SELECT ba.book_id FROM book_authors ba JOIN authors a ON a.id=ba.author_id "
+                         "WHERE a.name = ? COLLATE NOCASE)")
+            args.append(author.strip())
         if owner:
             where.append("(b.owner=? OR b.wanted_by=?)")
             args += [owner, owner]
@@ -763,6 +773,26 @@ def delete_file(file_id: int, user: str = Depends(current_user)):
     return get_book(r["book_id"], user)
 
 
+# ------------------------------------------------------------------ hiányzó adatok kiegészítése
+
+
+@app.get("/api/enrich")
+def enrich_status(user: str = Depends(current_user)):
+    with db.connect() as con:
+        left = con.execute("SELECT COUNT(*) FROM books WHERE (description IS NULL OR trim(description)='') "
+                           "AND enriched_at IS NULL AND wishlist=0").fetchone()[0]
+    return {**enrich.state, "pending": left}
+
+
+@app.post("/api/enrich")
+def enrich_start(user: str = Depends(current_user)):
+    try:
+        enrich.run(_replace_image, _set_relations)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ közös e-könyv mappa
 
 @app.get("/api/library/status")
@@ -814,8 +844,10 @@ def library_import(data: ImportIn, user: str = Depends(current_user)):
     if not data.items:
         raise HTTPException(400, "Nincs kijelölve semmi")
     try:
+        # import után a hiányzó leírások automatikus kitöltése is elindul
         library.run_import([i.model_dump() for i in data.items], (data.owner or "").strip() or None, user,
-                           _replace_image, _set_relations)
+                           _replace_image, _set_relations,
+                           on_done=lambda: enrich.run(_replace_image, _set_relations))
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     return {"ok": True}

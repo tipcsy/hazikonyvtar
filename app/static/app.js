@@ -9,7 +9,7 @@ const PAGE = 60;
 const state = {
   user: null, meta: null,
   f: { q: "", status: "all", tags: new Set(), tagMode: "any", owner: "", fmt: "", location: "", sort: "",
-       read: "", minRating: "0", rmode: "mine" },
+       read: "", minRating: "0", rmode: "mine", author: "" },
   items: [], total: 0, loading: false, reqId: 0,
   current: null,            // megnyitott könyv
   ed: null,                 // szerkesztő állapot
@@ -133,6 +133,8 @@ async function loadMeta() {
   $("#cAll").textContent = m.counts.all;
   $("#cOwned").textContent = m.counts.owned;
   $("#cWish").textContent = m.counts.wishlist;
+  $("#cServer").textContent = m.counts.server;
+  $("#segServer").classList.toggle("hidden", !m.counts.server && state.f.status !== "server");
   fillSelect($("#fOwner"), m.owners, "Bárki", state.f.owner);
   fillSelect($("#fFormat"), m.formats, "Bármely", state.f.fmt);
   fillSelect($("#fLocation"), m.locations, "Bárhol", state.f.location);
@@ -198,9 +200,30 @@ function queryString(offset) {
   const f = state.f;
   const p = new URLSearchParams({ q: f.q, status: f.status, tags: [...f.tags].join("|"), tag_mode: f.tagMode,
     owner: f.owner, fmt: f.fmt, location: f.location, sort: f.sort, read: f.read, min_rating: f.minRating,
-    rmode: f.rmode, limit: PAGE, offset });
+    rmode: f.rmode, author: f.author, limit: PAGE, offset });
   return p.toString();
 }
+
+/* szerző szűrő: beírás/választás a listából, vagy koppintás a szerző nevére az adatlapon */
+function setAuthorFilter(name) {
+  state.f.author = (name || "").trim();
+  $("#fAuthor").value = state.f.author;
+  const chip = $("#authorChip");
+  chip.textContent = state.f.author ? `✍ ${state.f.author} ✕` : "";
+  chip.classList.toggle("hidden", !state.f.author);
+  search();
+}
+let authorTimer;
+$("#fAuthor").addEventListener("change", () => setAuthorFilter($("#fAuthor").value));
+$("#fAuthor").addEventListener("input", () => {
+  clearTimeout(authorTimer);
+  const v = $("#fAuthor").value.trim();
+  // csak akkor szűr gépelés közben, ha a név pontosan egy létező szerző (vagy üres)
+  if (!v || (state.meta && state.meta.authors.some((a) => a.toLowerCase() === v.toLowerCase()))) {
+    authorTimer = setTimeout(() => setAuthorFilter(v), 200);
+  }
+});
+$("#authorChip").onclick = () => setAuthorFilter("");
 
 /* csillagok */
 function starsHtml(v, cls = "sm") {
@@ -248,7 +271,7 @@ function renderGrid(appended) {
   else g.innerHTML = state.items.length ? state.items.map(cardHtml).join("")
     : `<div class="empty">${state.meta && state.meta.counts.all ? "Nincs találat." : "Még üres a könyvtár. Nyomd meg a ＋ gombot az első könyv felvételéhez!"}</div>`;
   const f = state.f;
-  const active = f.q || f.tags.size || f.status !== "all" || f.owner || f.fmt || f.location || f.read || +f.minRating;
+  const active = f.q || f.tags.size || f.status !== "all" || f.owner || f.fmt || f.location || f.read || +f.minRating || f.author;
   $("#resultInfo").textContent = active ? `${state.total} találat` : `${state.total} könyv`;
   $("#moreBtn").classList.toggle("hidden", state.items.length >= state.total);
 }
@@ -264,7 +287,27 @@ $("#grid").addEventListener("click", (e) => {
 });
 
 /* ---------------------------------------------------------------- menü */
-$("#menuBtn").onclick = () => openSheet($("#menu"));
+$("#menuBtn").onclick = () => { openSheet($("#menu")); pollEnrich(); };
+
+/* hiányzó leírások kitöltése (háttérben fut a szerveren) */
+let enrichTimer;
+async function pollEnrich() {
+  clearTimeout(enrichTimer);
+  let s;
+  try { s = await api("/api/enrich"); } catch { return; }
+  $("#enrichBadge").textContent = s.pending || "";
+  $("#enrichBtn").disabled = s.running || !s.pending;
+  const el = $("#enrichStatus");
+  if (s.running) el.textContent = `Fut: ${s.done}/${s.total} könyv átnézve, ${s.filled} leírás és ${s.covers} borító kitöltve…`;
+  else if (s.finished_at) el.textContent = `Utoljára: ${s.finished_at} – ${s.filled} leírás, ${s.covers} borító kitöltve.` +
+    (s.pending ? "" : " Nincs több kitöltendő könyv.");
+  else el.textContent = s.pending ? "Csak az üres mezőket tölti ki (moly.hu / ISBN), könyvenként egyszer próbálkozik." : "";
+  if (s.running && !$("#menu").classList.contains("hidden")) enrichTimer = setTimeout(pollEnrich, 3000);
+}
+$("#enrichBtn").onclick = async () => {
+  try { await api("/api/enrich", { method: "POST" }); toast("Kitöltés elindult a háttérben"); pollEnrich(); }
+  catch (e) { toast(e.message, true); }
+};
 $("#logoutBtn").onclick = async () => {
   await api("/api/logout", { method: "POST" });
   location.reload();
@@ -399,8 +442,8 @@ $("#detailBody").addEventListener("click", (e) => {
   const a = e.target.closest("[data-author]");
   if (a) {
     e.preventDefault();
-    $("#q").value = a.dataset.author; state.f.q = a.dataset.author;
-    closeTop(); search(); return;
+    $("#q").value = ""; state.f.q = "";
+    closeTop(); setAuthorFilter(a.dataset.author); return;
   }
   const t = e.target.closest("[data-tagfilter]");
   if (t) {
