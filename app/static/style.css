@@ -274,3 +274,58 @@ legend { color: var(--muted); font-size: .85rem; padding: 0 6px; }
   max-width: calc(100% - 32px); font-size: .92rem;
 }
 .toast.error { background: var(--danger); color: #fff; }
+
+/* ------------------------------------------------ értékelés (csillagok) */
+.stars { position: relative; display: inline-block; line-height: 1; letter-spacing: 1px; color: var(--line); white-space: nowrap; }
+.stars::before { content: "★★★★★"; }
+.stars .fill { position: absolute; inset: 0 auto 0 0; overflow: hidden; color: #e0a526; }
+.stars .fill::before { content: "★★★★★"; }
+.stars.sm { font-size: .78rem; }
+.stars.lg { font-size: 2rem; letter-spacing: 3px; cursor: pointer; touch-action: manipulation; user-select: none; }
+.card .meta-line { display: flex; align-items: center; gap: 6px; min-height: 1em; }
+.card .rs { font-size: .74rem; color: var(--muted); }
+.card .read-badge {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: .8rem; color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+.read-badge.igen { background: var(--ok); }
+.read-badge.folyamatban { background: #c98a1a; }
+.mine-box {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px;
+  margin-top: 16px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center;
+}
+.mine-box .lbl { font-size: .8rem; color: var(--muted); margin-bottom: 4px; }
+.mine-box .val { font-size: .85rem; color: var(--muted); margin-left: 6px; }
+.others { width: 100%; font-size: .88rem; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+.others b { color: var(--text); font-weight: 600; }
+.seg.read button.on[data-v="igen"] { background: var(--ok); color: #fff; }
+.seg.read button.on[data-v="folyamatban"] { background: #c98a1a; color: #fff; }
+.file .read-btn { flex: none; }
+.pill { background: var(--accent); color: #fff; border-radius: 999px; padding: 1px 8px; font-size: .78rem; margin-left: 6px; }
+.pill:empty { display: none; }
+
+/* ------------------------------------------------ import */
+.imp-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.imp-tools input[type=search] { flex: 1; min-width: 160px; }
+.impOwner { display: flex; align-items: center; gap: 6px; font-size: .85rem; color: var(--muted); }
+.impOwner input { width: 110px; }
+.imp-list { display: flex; flex-direction: column; gap: 8px; }
+.imp-dir { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.imp-dir > summary {
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; list-style: none; font-weight: 600;
+}
+.imp-dir > summary::-webkit-details-marker { display: none; }
+.imp-dir > summary .n { color: var(--muted); font-weight: 400; font-size: .85rem; margin-left: auto; white-space: nowrap; }
+.imp-dir > summary .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-row { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 8px 10px; border-top: 1px solid var(--line); align-items: start; }
+.imp-row input[type=checkbox], .imp-dir summary input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
+.imp-row .fields { display: grid; grid-template-columns: 1.4fr 1fr; gap: 6px; min-width: 0; }
+@media (max-width: 560px) { .imp-row .fields { grid-template-columns: 1fr; } }
+.imp-row .fields input { padding: 6px 8px; font-size: .9rem; }
+.imp-row .files-line { grid-column: 2; font-size: .78rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.imp-row .files-line .fmt-tag { background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 5px; font-weight: 600; }
+.imp-row .files-line .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.imp-foot {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--surface);
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}

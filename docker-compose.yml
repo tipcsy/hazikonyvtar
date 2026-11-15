@@ -10,6 +10,9 @@ services:
       - .env
     environment:
       - DATA_DIR=/data
+      - LIBRARY_DIR=/library
     volumes:
-      # Adatbázis, borítók, e-könyv fájlok, mentések
+      # Adatbázis, borítók, feltöltött e-könyv fájlok, mentések
       - /mnt/truenas_share/Program_Files/hazikonyvtar_data:/data
+      # A közös e-könyv mappa - CSAK OLVASÁSRA (a program nem módosíthatja)
+      - /mnt/truenas_share/Könyvek:/library:ro

@@ -5,9 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/data \
     TZ=Europe/Budapest
 
-# libzbar0: vonalkód olvasás, tesseract: szövegfelismerés a borítóról
+# libzbar0: vonalkód, poppler-utils: PDF borítókép, tesseract: szövegfelismerés
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libzbar0 tesseract-ocr tesseract-ocr-hun tesseract-ocr-eng tzdata \
+ && apt-get install -y --no-install-recommends libzbar0 poppler-utils tesseract-ocr tesseract-ocr-hun tesseract-ocr-eng tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -9,7 +9,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon.svg">
-<link rel="stylesheet" href="/static/style.css?v=1">
+<link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
 
@@ -47,12 +47,36 @@
       <label>Kié / ki szeretné <select id="fOwner"><option value="">Bárki</option></select></label>
       <label>Formátum <select id="fFormat"><option value="">Bármely</option></select></label>
       <label>Hol <select id="fLocation"><option value="">Bárhol</option></select></label>
+      <label>Olvasás (saját)
+        <select id="fRead">
+          <option value="">Bárhogy</option>
+          <option value="igen">Olvastam</option>
+          <option value="folyamatban">Folyamatban</option>
+          <option value="nem">Még nem olvastam</option>
+        </select>
+      </label>
+      <label>Értékelés legalább
+        <select id="fRating">
+          <option value="0">Bármennyi</option>
+          <option value="2">★★ 2+</option>
+          <option value="3">★★★ 3+</option>
+          <option value="4">★★★★ 4+</option>
+          <option value="4.5">★★★★½ 4,5+</option>
+        </select>
+      </label>
+      <label>Értékelés nézet
+        <select id="fRmode">
+          <option value="mine">Csak a saját értékelésem</option>
+          <option value="avg">Összesített (átlag)</option>
+        </select>
+      </label>
       <label>Rendezés
         <select id="fSort">
           <option value="">Relevancia / cím</option>
           <option value="title">Cím (A–Z)</option>
           <option value="new">Legutóbb felvett</option>
           <option value="year">Megjelenés éve</option>
+          <option value="rating">Értékelés</option>
         </select>
       </label>
       <label>Címkék
@@ -78,6 +102,7 @@
 <div id="menu" class="sheet-backdrop hidden">
   <div class="menu-card">
     <p class="muted">Bejelentkezve: <b id="whoami"></b></p>
+    <button id="importBtn" class="btn ghost block hidden">📂 E-könyvek importálása a mappából <span id="importBadge" class="pill"></span></button>
     <a class="btn ghost block" href="/api/export">Mentés letöltése (JSON)</a>
     <button id="logoutBtn" class="btn ghost block">Kijelentkezés</button>
     <button class="btn block" data-close>Bezár</button>
@@ -200,6 +225,39 @@
   </div>
 </div>
 
+<!-- E-könyv import a közös mappából -->
+<div id="importer" class="sheet-backdrop hidden">
+  <div class="sheet">
+    <div class="sheet-head">
+      <button class="icon-btn" data-close aria-label="Bezár">✕</button>
+      <h2>E-könyvek a közös mappából</h2>
+      <div class="grow"></div>
+      <button id="scanBtn" class="btn small">↻ Átvizsgálás</button>
+    </div>
+    <div class="sheet-body">
+      <p id="impStatus" class="af-status"></p>
+      <p class="muted small">A fájlok a helyükön maradnak (a program nem módosítja a mappát), csak hivatkozás készül
+        rájuk. Jelöld ki, amit fel szeretnél venni; a nem könyv jellegű fájlokat (újságok, munkafüzetek…) elrejtheted.
+        A címet és a szerzőt importálás előtt át is írhatod.</p>
+      <div class="imp-tools">
+        <div class="seg" id="impWhich">
+          <button data-v="new" class="on">Új <small id="impNew"></small></button>
+          <button data-v="ignored">Elrejtett <small id="impIgn"></small></button>
+        </div>
+        <input id="impFilter" type="search" placeholder="Szűrés mappára, címre…">
+        <label class="impOwner">Kié?<input id="impOwner" list="dlOwners" value="Közös"></label>
+      </div>
+      <div id="impList" class="imp-list"></div>
+    </div>
+    <div class="imp-foot">
+      <span id="impSel" class="muted small">0 kijelölve</span>
+      <div class="grow"></div>
+      <button id="impHide" class="btn small ghost">Elrejtés</button>
+      <button id="impGo" class="btn small primary">Importálás</button>
+    </div>
+  </div>
+</div>
+
 <!-- Kép nagyítás -->
 <div id="lightbox" class="lightbox hidden"><img alt=""></div>
 
@@ -213,6 +271,6 @@
 <datalist id="dlShops"></datalist>
 <datalist id="dlCurrency"><option>HUF</option><option>EUR</option><option>USD</option><option>GBP</option></datalist>
 
-<script src="/static/app.js?v=1"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

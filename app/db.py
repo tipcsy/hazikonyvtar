@@ -9,6 +9,9 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "./data")).resolve()
 DB_PATH = DATA_DIR / "konyvtar.db"
 COVERS_DIR = DATA_DIR / "covers"
 FILES_DIR = DATA_DIR / "files"
+# A közös e-könyv mappa (csak olvasásra csatolva). Üres = nincs bekapcsolva.
+_lib = os.environ.get("LIBRARY_DIR", "").strip()
+LIBRARY_DIR = Path(_lib).resolve() if _lib else None
 
 # Hálózati megosztáson (NFS/SMB) a WAL mód nem biztonságos, ezért alapból DELETE.
 JOURNAL_MODE = os.environ.get("SQLITE_JOURNAL_MODE", "DELETE").upper()
@@ -96,7 +99,54 @@ CREATE VIRTUAL TABLE IF NOT EXISTS books_fts USING fts5(
     title, authors, tags, description, notes, other,
     tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- Felhasználónkénti adatok: értékelés (1-5, fél csillagokkal) és olvasási állapot
+CREATE TABLE IF NOT EXISTS user_books (
+    book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    user       TEXT NOT NULL,
+    rating     REAL,               -- 1.0 .. 5.0, 0.5-ös lépésekben
+    status     TEXT,               -- 'nem' | 'folyamatban' | 'igen'
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (book_id, user)
+);
+
+-- Hol tart az olvasásban (fájlonként, felhasználónként)
+CREATE TABLE IF NOT EXISTS reading_positions (
+    file_id    INTEGER NOT NULL REFERENCES book_files(id) ON DELETE CASCADE,
+    user       TEXT NOT NULL,
+    position   TEXT,
+    percent    REAL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (file_id, user)
+);
+
+-- A közös "Könyvek" mappa átvizsgált fájljai (állandó kapcsolat)
+CREATE TABLE IF NOT EXISTS library_files (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    path         TEXT NOT NULL UNIQUE,   -- relatív út a LIBRARY_DIR-hez
+    dir          TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    format       TEXT NOT NULL,
+    size         INTEGER,
+    mtime        REAL,
+    title        TEXT,
+    authors      TEXT,                   -- JSON lista
+    meta         TEXT,                   -- JSON: leírás, kiadó, év, isbn, címkék...
+    group_key    TEXT,
+    state        TEXT NOT NULL DEFAULT 'new',   -- new | imported | ignored
+    missing      INTEGER NOT NULL DEFAULT 0,
+    book_file_id INTEGER,
+    scanned_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_libfiles_state ON library_files(state);
 """
+
+
+def _migrate(con):
+    cols = {r[1] for r in con.execute("PRAGMA table_info(book_files)")}
+    if "source" not in cols:
+        # 'upload' = feltöltött fájl a DATA_DIR-ben, 'library' = a közös Könyvek mappában
+        con.execute("ALTER TABLE book_files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
 
 
 def init_db():
@@ -105,6 +155,7 @@ def init_db():
     FILES_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as con:
         con.executescript(SCHEMA)
+        _migrate(con)
 
 
 def _connect():

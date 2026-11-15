@@ -17,6 +17,10 @@ Saját könyvtár-nyilvántartó webalkalmazás két felhasználónak (Tibi, Év
 | Szűrők | Mind / Polcon / Kívánságlista, címkék (bármelyik vagy mindegyik), kié, formátum, hely, rendezés |
 | Automatikus kitöltés | **link** (Libri, Bookline, Moly, Líra, Alexandra, Amazon, bármely oldal szabványos adataiból), **ISBN**, **cím/szerző** keresés (találatlista), **borítófotó** vagy **hátoldal-fotó vonalkóddal** |
 | Mentés | naponta automatikus adatbázis-mentés a `data/backups` mappába (30 napig), plusz JSON export a menüből |
+| Értékelés | 1–5 csillag fél csillagokkal, felhasználónként. Nézet: csak a saját, vagy összesített (átlag + ki mennyit adott). Szűrés és rendezés értékelés szerint. |
+| Olvasási állapot | Még nem / Folyamatban / Olvastam – mindenkinek a saját állapota. Szűrhető. Az olvasó megnyitásakor automatikusan „Folyamatban” lesz. |
+| E-könyv olvasás | EPUB: beépített olvasó (lapozás, tartalomjegyzék, betűméret, világos/szépia/sötét téma, a pozíciót felhasználónként megjegyzi). PDF: a böngésző saját nézőjében. MOBI/AZW/PRC: letöltés (Kindle). |
+| Közös e-könyv mappa | A `/mnt/truenas_share/Könyvek` mappa **csak olvasásra** csatolva. 6 óránként átvizsgálja, a fájlokból kiolvassa a címet, szerzőt, leírást, borítót. A menü → *E-könyvek importálása* oldalon mappánként kijelölhető, mi kerüljön be (a cím/szerző előtte javítható); a nem könyv fájlok elrejthetők. A fájlok a helyükön maradnak. Ha egy importált könyvet törölsz, a fájl nem törlődik, csak újra importálható lesz. |
 
 ### Honnan jönnek az automatikus adatok?
 

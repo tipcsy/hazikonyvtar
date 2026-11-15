@@ -8,3 +8,4 @@ pillow>=11.0
 pyzbar==0.1.9
 pytesseract==0.3.13
 anthropic
+pypdf==5.1.0

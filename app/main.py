@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import db, metadata
+from . import db, library, metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -47,7 +47,10 @@ def _parse_users(raw: str) -> dict[str, str]:
 
 USERS = _parse_users(os.environ.get("APP_USERS", ""))
 OWNERS = [x.strip() for x in os.environ.get("OWNERS", "Tibi,Évi,Közös,Család").split(",") if x.strip()]
-FORMATS = ["Papír", "EPUB", "AZW3", "AZW", "MOBI", "PDF", "Hangoskönyv"]
+FORMATS = ["Papír", "EPUB", "AZW3", "AZW", "MOBI", "PRC", "PDF", "FB2", "DOC", "DOCX", "Hangoskönyv"]
+# böngészőben olvasható formátumok (EPUB: beépített olvasó, PDF: a böngésző saját nézője)
+READABLE = {"EPUB", "PDF"}
+LIBRARY_SCAN_HOURS = float(os.environ.get("LIBRARY_SCAN_HOURS", "6"))
 EBOOK_EXT = {".pdf": "PDF", ".epub": "EPUB", ".azw": "AZW", ".azw3": "AZW3", ".mobi": "MOBI",
              ".kfx": "KFX", ".fb2": "FB2", ".djvu": "DJVU", ".cbz": "CBZ", ".cbr": "CBR",
              ".txt": "TXT", ".rtf": "RTF", ".doc": "DOC", ".docx": "DOCX",
@@ -85,6 +88,17 @@ def _startup():
     if not USERS:
         log.warning("Nincs APP_USERS beállítva - a bejelentkezés KI VAN KAPCSOLVA!")
     threading.Thread(target=_backup_loop, daemon=True).start()
+    if library.enabled():
+        threading.Thread(target=_scan_loop, daemon=True).start()
+        log.info("Közös e-könyv mappa: %s", db.LIBRARY_DIR)
+
+
+def _scan_loop():
+    """A közös mappa rendszeres átvizsgálása (új fájlok megjelennek az import oldalon)."""
+    time.sleep(90)
+    while True:
+        library.scan()
+        time.sleep(max(0.5, LIBRARY_SCAN_HOURS) * 3600)
 
 
 def _backup_loop():
@@ -178,7 +192,7 @@ def _list(con, sql, args=()):
     return [dict(r) for r in con.execute(sql, args).fetchall()]
 
 
-def book_details(con, ids: list[int], full: bool = False) -> list[dict]:
+def book_details(con, ids: list[int], full: bool = False, user: str | None = None) -> list[dict]:
     if not ids:
         return []
     ph = ",".join("?" * len(ids))
@@ -186,7 +200,21 @@ def book_details(con, ids: list[int], full: bool = False) -> list[dict]:
                              "wishlist,owner,wanted_by,location,price,currency,shop,link,updated_at")
     rows = {r["id"]: dict(r) for r in con.execute(f"SELECT {cols} FROM books WHERE id IN ({ph})", ids)}
     for r in rows.values():
-        r["authors"], r["tags"], r["files"] = [], [], []
+        r["authors"], r["tags"], r["files"], r["ratings"] = [], [], [], []
+        r["my_rating"] = r["my_status"] = r["avg_rating"] = None
+        r["rating_count"] = 0
+    for r in con.execute(f"SELECT book_id, user, rating, status FROM user_books WHERE book_id IN ({ph}) "
+                         f"ORDER BY user", ids):
+        b = rows[r["book_id"]]
+        b["ratings"].append({"user": r["user"], "rating": r["rating"], "status": r["status"]})
+        if r["user"] == user:
+            b["my_rating"], b["my_status"] = r["rating"], r["status"]
+    for b in rows.values():
+        vals = [x["rating"] for x in b["ratings"] if x["rating"]]
+        b["rating_count"] = len(vals)
+        b["avg_rating"] = round(sum(vals) / len(vals), 2) if vals else None
+        if not full:
+            del b["ratings"]
     for r in con.execute(
             f"SELECT ba.book_id, a.name FROM book_authors ba JOIN authors a ON a.id=ba.author_id "
             f"WHERE ba.book_id IN ({ph}) ORDER BY ba.position", ids):
@@ -196,8 +224,10 @@ def book_details(con, ids: list[int], full: bool = False) -> list[dict]:
             f"WHERE bt.book_id IN ({ph}) ORDER BY t.name", ids):
         rows[r["book_id"]]["tags"].append(r["name"])
     for r in con.execute(
-            f"SELECT id, book_id, format, orig_name, size FROM book_files WHERE book_id IN ({ph}) ORDER BY id", ids):
-        rows[r["book_id"]]["files"].append({k: r[k] for k in ("id", "format", "orig_name", "size")})
+            f"SELECT id, book_id, format, orig_name, size, source FROM book_files WHERE book_id IN ({ph}) ORDER BY id", ids):
+        f = {k: r[k] for k in ("id", "format", "orig_name", "size", "source")}
+        f["readable"] = r["format"] in READABLE
+        rows[r["book_id"]]["files"].append(f)
     for r in rows.values():
         r["formats"] = [f for f in (r.get("formats") or "").split(",") if f]
         r["wishlist"] = bool(r["wishlist"])
@@ -248,6 +278,7 @@ def meta(user: str = Depends(current_user)):
 @app.get("/api/books")
 def list_books(q: str = "", tags: str = "", tag_mode: str = "any", status: str = "all",
                owner: str = "", fmt: str = "", location: str = "", sort: str = "",
+               read: str = "", min_rating: float = 0, rmode: str = "mine",
                limit: int = 60, offset: int = 0, user: str = Depends(current_user)):
     where, args = [], []
     rank = {}
@@ -301,12 +332,35 @@ def list_books(q: str = "", tags: str = "", tag_mode: str = "any", status: str =
         if location:
             where.append("b.location=?")
             args.append(location)
+        # saját olvasási állapot
+        if read in ("igen", "folyamatban"):
+            where.append("b.id IN (SELECT book_id FROM user_books WHERE user=? AND status=?)")
+            args += [user, read]
+        elif read == "nem":
+            where.append("b.id NOT IN (SELECT book_id FROM user_books WHERE user=? "
+                         "AND status IN ('igen','folyamatban'))")
+            args.append(user)
+        if min_rating:
+            if rmode == "avg":
+                where.append("b.id IN (SELECT book_id FROM user_books GROUP BY book_id HAVING AVG(rating)>=?)")
+                args.append(min_rating)
+            else:
+                where.append("b.id IN (SELECT book_id FROM user_books WHERE user=? AND rating>=?)")
+                args += [user, min_rating]
         sql = "SELECT b.id, b.title, b.created_at, b.publish_year, b.purchase_year FROM books b"
         if where:
             sql += " WHERE " + " AND ".join(where)
         rows = con.execute(sql, args).fetchall()
 
-        if sort == "new":
+        if sort == "rating":
+            if rmode == "avg":
+                rmap = {r[0]: r[1] for r in con.execute(
+                    "SELECT book_id, AVG(rating) FROM user_books WHERE rating IS NOT NULL GROUP BY book_id")}
+            else:
+                rmap = {r[0]: r[1] for r in con.execute(
+                    "SELECT book_id, rating FROM user_books WHERE user=? AND rating IS NOT NULL", (user,))}
+            rows = sorted(rows, key=lambda r: (-(rmap.get(r["id"]) or 0), sort_key(r["title"])))
+        elif sort == "new":
             rows = sorted(rows, key=lambda r: r["created_at"], reverse=True)
         elif sort == "year":
             rows = sorted(rows, key=lambda r: r["publish_year"] or 0, reverse=True)
@@ -316,17 +370,50 @@ def list_books(q: str = "", tags: str = "", tag_mode: str = "any", status: str =
             rows = sorted(rows, key=lambda r: rank.get(r["id"], 1e9))
         total = len(rows)
         page_ids = [r["id"] for r in rows[offset:offset + max(1, min(limit, 500))]]
-        items = book_details(con, page_ids)
+        items = book_details(con, page_ids, user=user)
     return {"total": total, "items": items}
 
 
 @app.get("/api/books/{book_id}")
 def get_book(book_id: int, user: str = Depends(current_user)):
     with db.connect() as con:
-        res = book_details(con, [book_id], full=True)
+        res = book_details(con, [book_id], full=True, user=user)
     if not res:
         raise HTTPException(404, "Nincs ilyen könyv")
     return res[0]
+
+
+class MineIn(BaseModel):
+    """Saját értékelés / olvasási állapot. Csak a megadott mezők változnak."""
+    rating: Optional[float] = None
+    status: Optional[str] = None
+    clear_rating: bool = False
+
+
+@app.put("/api/books/{book_id}/me")
+def set_mine(book_id: int, data: MineIn, user: str = Depends(current_user)):
+    if data.status is not None and data.status not in ("nem", "folyamatban", "igen"):
+        raise HTTPException(400, "Állapot: nem | folyamatban | igen")
+    rating = None
+    if data.rating is not None:
+        rating = round(float(data.rating) * 2) / 2
+        if not 1 <= rating <= 5:
+            raise HTTPException(400, "Az értékelés 1 és 5 között lehet (fél csillagokkal)")
+    with db.write() as con:
+        if not con.execute("SELECT 1 FROM books WHERE id=?", (book_id,)).fetchone():
+            raise HTTPException(404, "Nincs ilyen könyv")
+        con.execute("INSERT OR IGNORE INTO user_books(book_id, user) VALUES (?,?)", (book_id, user))
+        if rating is not None:
+            con.execute("UPDATE user_books SET rating=?, updated_at=datetime('now') WHERE book_id=? AND user=?",
+                        (rating, book_id, user))
+        if data.clear_rating:
+            con.execute("UPDATE user_books SET rating=NULL, updated_at=datetime('now') WHERE book_id=? AND user=?",
+                        (book_id, user))
+        if data.status is not None:
+            con.execute("UPDATE user_books SET status=?, updated_at=datetime('now') WHERE book_id=? AND user=?",
+                        (data.status, book_id, user))
+        con.execute("DELETE FROM user_books WHERE rating IS NULL AND (status IS NULL OR status='nem')")
+    return get_book(book_id, user)
 
 
 class BookIn(BaseModel):
@@ -449,12 +536,14 @@ def delete_book(book_id: int, user: str = Depends(current_user)):
         b = con.execute("SELECT cover_path, back_path FROM books WHERE id=?", (book_id,)).fetchone()
         if not b:
             raise HTTPException(404, "Nincs ilyen könyv")
-        files = con.execute("SELECT path FROM book_files WHERE book_id=?", (book_id,)).fetchall()
+        files = con.execute("SELECT id, path, source FROM book_files WHERE book_id=?", (book_id,)).fetchall()
+        # a közös mappában lévő fájlokat SOSEM töröljük, csak újra importálhatóvá tesszük
+        library.release_files(con, [f["id"] for f in files if f["source"] == "library"])
         con.execute("DELETE FROM books WHERE id=?", (book_id,))
         con.execute("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM book_authors)")
         con.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM book_tags)")
         db.reindex_book(con, book_id)
-    for rel in [b["cover_path"], b["back_path"]] + [f["path"] for f in files]:
+    for rel in [b["cover_path"], b["back_path"]] + [f["path"] for f in files if f["source"] == "upload"]:
         if rel:
             _delete_rel(rel)
     return {"ok": True}
@@ -599,27 +688,137 @@ async def upload_file(book_id: int, file: UploadFile = File(...), user: str = De
     return get_book(book_id, user)
 
 
+def _file_path(r) -> Path | None:
+    if r["source"] == "library":
+        return library.abs_path(r["path"])
+    p = (db.DATA_DIR / r["path"]).resolve()
+    return p if db.DATA_DIR in p.parents else None
+
+
+MIME = {"EPUB": "application/epub+zip", "PDF": "application/pdf", "MOBI": "application/x-mobipocket-ebook",
+        "AZW3": "application/vnd.amazon.ebook", "AZW": "application/vnd.amazon.ebook"}
+
+
 @app.get("/api/files/{file_id}")
-def download_file(file_id: int, user: str = Depends(current_user)):
+def download_file(file_id: int, inline: int = 0, user: str = Depends(current_user)):
+    """Letöltés; inline=1 esetén böngészőben megnyitható (PDF olvasás, EPUB olvasó)."""
     with db.connect() as con:
-        r = con.execute("SELECT path, orig_name FROM book_files WHERE id=?", (file_id,)).fetchone()
+        r = con.execute("SELECT path, orig_name, source, format FROM book_files WHERE id=?", (file_id,)).fetchone()
     if not r:
         raise HTTPException(404)
-    p = (db.DATA_DIR / r["path"]).resolve()
-    if db.DATA_DIR not in p.parents or not p.exists():
+    p = _file_path(r)
+    if not p or not p.exists():
         raise HTTPException(404, "A fájl nem található a lemezen")
-    return FileResponse(p, filename=r["orig_name"] or p.name)
+    return FileResponse(p, filename=r["orig_name"] or p.name, media_type=MIME.get(r["format"]),
+                        content_disposition_type="inline" if inline else "attachment")
+
+
+@app.get("/api/files/{file_id}/info")
+def file_info(file_id: int, user: str = Depends(current_user)):
+    with db.connect() as con:
+        r = con.execute("SELECT f.id, f.book_id, f.format, f.orig_name, b.title FROM book_files f "
+                        "JOIN books b ON b.id=f.book_id WHERE f.id=?", (file_id,)).fetchone()
+        if not r:
+            raise HTTPException(404)
+        pos = con.execute("SELECT position, percent FROM reading_positions WHERE file_id=? AND user=?",
+                          (file_id, user)).fetchone()
+    return {**dict(r), "position": pos["position"] if pos else None, "percent": pos["percent"] if pos else None}
+
+
+class PositionIn(BaseModel):
+    position: str
+    percent: Optional[float] = None
+
+
+@app.put("/api/files/{file_id}/position")
+def save_position(file_id: int, data: PositionIn, user: str = Depends(current_user)):
+    with db.write() as con:
+        r = con.execute("SELECT book_id FROM book_files WHERE id=?", (file_id,)).fetchone()
+        if not r:
+            raise HTTPException(404)
+        con.execute("""INSERT INTO reading_positions(file_id, user, position, percent, updated_at)
+                       VALUES (?,?,?,?, datetime('now'))
+                       ON CONFLICT(file_id, user) DO UPDATE SET position=excluded.position,
+                       percent=excluded.percent, updated_at=excluded.updated_at""",
+                    (file_id, user, data.position[:2000], data.percent))
+        # olvasás megkezdése -> "folyamatban" (ha még nem volt állapota)
+        con.execute("INSERT OR IGNORE INTO user_books(book_id, user, status) VALUES (?,?, 'folyamatban')",
+                    (r["book_id"], user))
+        con.execute("UPDATE user_books SET status='folyamatban' WHERE book_id=? AND user=? "
+                    "AND (status IS NULL OR status='nem')", (r["book_id"], user))
+    return {"ok": True}
 
 
 @app.delete("/api/files/{file_id}")
 def delete_file(file_id: int, user: str = Depends(current_user)):
     with db.write() as con:
-        r = con.execute("SELECT book_id, path FROM book_files WHERE id=?", (file_id,)).fetchone()
+        r = con.execute("SELECT book_id, path, source FROM book_files WHERE id=?", (file_id,)).fetchone()
         if not r:
             raise HTTPException(404)
+        if r["source"] == "library":
+            library.release_files(con, [file_id])
         con.execute("DELETE FROM book_files WHERE id=?", (file_id,))
-    _delete_rel(r["path"])
+    if r["source"] == "upload":
+        _delete_rel(r["path"])
     return get_book(r["book_id"], user)
+
+
+# ------------------------------------------------------------------ közös e-könyv mappa
+
+@app.get("/api/library/status")
+def library_status(user: str = Depends(current_user)):
+    if not library.enabled():
+        return {"enabled": False}
+    return {"enabled": True, **library.state, **library.counts()}
+
+
+@app.post("/api/library/scan")
+def library_scan(user: str = Depends(current_user)):
+    if not library.enabled():
+        raise HTTPException(400, "A könyvtár mappa nincs beállítva (LIBRARY_DIR)")
+    library.start_scan()
+    return {"ok": True}
+
+
+@app.get("/api/library/groups")
+def library_groups(which: str = "new", user: str = Depends(current_user)):
+    if which not in ("new", "ignored"):
+        raise HTTPException(400)
+    return {"items": library.groups(which)}
+
+
+class IgnoreIn(BaseModel):
+    file_ids: list[int]
+    ignored: bool = True
+
+
+@app.post("/api/library/ignore")
+def library_ignore(data: IgnoreIn, user: str = Depends(current_user)):
+    library.set_ignored(data.file_ids, data.ignored)
+    return library.counts()
+
+
+class ImportItem(BaseModel):
+    file_ids: list[int]
+    title: Optional[str] = None
+    authors: list[str] = []
+
+
+class ImportIn(BaseModel):
+    items: list[ImportItem]
+    owner: Optional[str] = None
+
+
+@app.post("/api/library/import")
+def library_import(data: ImportIn, user: str = Depends(current_user)):
+    if not data.items:
+        raise HTTPException(400, "Nincs kijelölve semmi")
+    try:
+        library.run_import([i.model_dump() for i in data.items], (data.owner or "").strip() or None, user,
+                           _replace_image, _set_relations)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ automatikus adatkitöltés
@@ -680,7 +879,7 @@ async def lookup_image(file: UploadFile = File(...), side: str = Form("front"), 
 def export(user: str = Depends(current_user)):
     with db.connect() as con:
         ids = [r[0] for r in con.execute("SELECT id FROM books ORDER BY id")]
-        books = book_details(con, ids, full=True)
+        books = book_details(con, ids, full=True, user=user)
     body = json.dumps({"exported_at": datetime.now().isoformat(), "books": books},
                       ensure_ascii=False, indent=1)
     name = f"hazikonyvtar_{datetime.now():%Y%m%d}.json"
@@ -698,6 +897,11 @@ def health():
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/olvaso")
+def reader():
+    return FileResponse(STATIC / "reader.html", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
