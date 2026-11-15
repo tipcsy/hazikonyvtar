@@ -32,6 +32,8 @@ FORMATS = {".epub": "EPUB", ".mobi": "MOBI", ".azw": "AZW", ".azw3": "AZW3", ".p
            ".pdf": "PDF", ".fb2": "FB2", ".djvu": "DJVU", ".doc": "DOC", ".docx": "DOCX",
            ".rtf": "RTF", ".cbz": "CBZ", ".cbr": "CBR"}
 # Ezeknél a nevű mappáknál lévő fájlokat kihagyjuk (rendszerfájlok)
+# Ha az adatkiolvasás javul, ezt növeld: a következő átvizsgálás mindent újraolvas
+EXTRACT_VERSION = 2
 SKIP_DIRS = {"@eaDir", ".AppleDouble", "#recycle", ".Trash", "$RECYCLE.BIN", ".git"}
 
 state = {
@@ -145,7 +147,18 @@ def epub_meta(path: Path) -> dict:
         txt = lambda tag: [(e.text or "").strip() for e in md.findall(f"dc:{tag}", NS) if (e.text or "").strip()]
         t = txt("title")
         d["title"] = t[0] if t else None
-        d["authors"] = [a for a in txt("creator")][:6]
+        # csak a szerzők (a fordító, szerkesztő, illusztrátor nem)
+        roles = {}
+        for m in md.iter("{http://www.idpf.org/2007/opf}meta"):   # EPUB3: <meta refines="#id" property="role">
+            if m.get("property") == "role" and m.get("refines"):
+                roles[m.get("refines").lstrip("#")] = (m.text or "").strip()
+        authors = []
+        for e in md.findall("dc:creator", NS):
+            name = (e.text or "").strip()
+            role = e.get("{http://www.idpf.org/2007/opf}role") or roles.get(e.get("id") or "", "")
+            if name and (not role or role == "aut"):
+                authors.append(name)
+        d["authors"] = authors[:6]
         desc = txt("description")
         d["description"] = metadata.clean_text(desc[0]) if desc else None
         pub = txt("publisher")
@@ -330,8 +343,21 @@ def extract(rel: str, path: Path, fmt: str) -> dict:
     # értelmetlen beágyazott címek kiszűrése
     if not title or len(title) < 2 or re.fullmatch(r"[\w\-]+\.(\w{2,4})", title) or norm(title) in ("unknown", "untitled"):
         title = ftitle
-    authors = [a for a in (meta.get("authors") or []) if a and not JUNK_AUTHOR.search(norm(a))]
+    authors = [a for a in (meta.get("authors") or [])
+               if a and len(norm(a)) > 2 and re.search(r"[A-Za-zÀ-ž]", a) and not JUNK_AUTHOR.search(norm(a))]
     authors = [_flip_name(a) for a in authors] or fauthors
+    # PDF-nél a beágyazott szerző gyakran a feltöltő/szkennelő: ha a mappa egy szerző nevét
+    # viseli, és nincs átfedés, a mappa nyer
+    top = rel.split("/")[0] if "/" in rel else ""
+    if fmt == "PDF" and top and not top.startswith("--") and fauthors:
+        fw = {w for a in fauthors for w in norm(a).split() if len(w) > 2}
+        if not any(fw & set(norm(a).split()) for a in authors):
+            authors = fauthors
+    # "Szerző - Cím" alakú cím tisztítása (szórendtől függetlenül)
+    if " - " in title:
+        first, rest = title.split(" - ", 1)
+        if any(set(norm(first).split()) == set(norm(a).split()) for a in authors):
+            title = rest.strip()
     meta["title"], meta["authors"] = title, authors
     return meta
 
@@ -372,7 +398,8 @@ def scan():
                     found.append((p.relative_to(root).as_posix(), p, FORMATS[ext]))
         state["scan_total"] = len(found)
         with db.connect() as con:
-            known = {r["path"]: (r["size"], r["mtime"]) for r in con.execute("SELECT path, size, mtime FROM library_files")}
+            known = {r["path"]: (r["size"], r["mtime"], (json.loads(r["meta"] or "{}") or {}).get("v"))
+                     for r in con.execute("SELECT path, size, mtime, meta FROM library_files")}
         seen = set()
         batch = []
         for i, (rel, p, fmt) in enumerate(found):
@@ -382,9 +409,10 @@ def scan():
                 st = p.stat()
             except OSError:
                 continue
-            if rel in known and known[rel] == (st.st_size, st.st_mtime):
+            if rel in known and known[rel] == (st.st_size, st.st_mtime, EXTRACT_VERSION):
                 continue
             meta = extract(rel, p, fmt)
+            meta["v"] = EXTRACT_VERSION
             dir_ = str(Path(rel).parent.as_posix()) if "/" in rel else ""
             batch.append((rel, dir_, Path(rel).name, fmt, st.st_size, st.st_mtime, meta["title"],
                           json.dumps(meta["authors"], ensure_ascii=False),
