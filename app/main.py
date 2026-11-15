@@ -773,6 +773,56 @@ def delete_file(file_id: int, user: str = Depends(current_user)):
     return get_book(r["book_id"], user)
 
 
+# ------------------------------------------------------------------ szerzők kezelése
+
+@app.get("/api/authors")
+def list_authors(user: str = Depends(current_user)):
+    with db.connect() as con:
+        rows = _list(con, "SELECT a.id, a.name, COUNT(ba.book_id) AS n FROM authors a "
+                          "LEFT JOIN book_authors ba ON ba.author_id=a.id GROUP BY a.id")
+    return {"items": sorted(rows, key=lambda r: sort_key(r["name"]))}
+
+
+class AuthorIn(BaseModel):
+    name: str = Field(min_length=1)
+
+
+@app.put("/api/authors/{author_id}")
+def rename_author(author_id: int, data: AuthorIn, user: str = Depends(current_user)):
+    """Átnevezés. Ha már létezik ilyen nevű szerző, a kettőt összevonja."""
+    name = re.sub(r"\s+", " ", data.name).strip()
+    with db.write() as con:
+        if not con.execute("SELECT 1 FROM authors WHERE id=?", (author_id,)).fetchone():
+            raise HTTPException(404, "Nincs ilyen szerző")
+        books = [r[0] for r in con.execute("SELECT book_id FROM book_authors WHERE author_id=?", (author_id,))]
+        other = con.execute("SELECT id FROM authors WHERE name=? AND id<>?", (name, author_id)).fetchone()
+        if other:
+            for b in books:
+                pos = con.execute("SELECT position FROM book_authors WHERE book_id=? AND author_id=?",
+                                  (b, author_id)).fetchone()[0]
+                con.execute("INSERT OR IGNORE INTO book_authors(book_id, author_id, position) VALUES (?,?,?)",
+                            (b, other[0], pos))
+            con.execute("DELETE FROM authors WHERE id=?", (author_id,))
+        else:
+            con.execute("UPDATE authors SET name=? WHERE id=?", (name, author_id))
+        for b in books:
+            con.execute("UPDATE books SET updated_at=datetime('now') WHERE id=?", (b,))
+            db.reindex_book(con, b)
+    return {"ok": True, "merged": bool(other), "books": len(books)}
+
+
+@app.delete("/api/authors/{author_id}")
+def delete_author(author_id: int, user: str = Depends(current_user)):
+    """A szerző törlése (a könyvek megmaradnak, csak ez a név kerül le róluk)."""
+    with db.write() as con:
+        books = [r[0] for r in con.execute("SELECT book_id FROM book_authors WHERE author_id=?", (author_id,))]
+        con.execute("DELETE FROM authors WHERE id=?", (author_id,))
+        for b in books:
+            con.execute("UPDATE books SET updated_at=datetime('now') WHERE id=?", (b,))
+            db.reindex_book(con, b)
+    return {"ok": True, "books": len(books)}
+
+
 # ------------------------------------------------------------------ hiányzó adatok kiegészítése
 
 

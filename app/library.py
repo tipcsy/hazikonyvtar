@@ -33,7 +33,7 @@ FORMATS = {".epub": "EPUB", ".mobi": "MOBI", ".azw": "AZW", ".azw3": "AZW3", ".p
            ".rtf": "RTF", ".cbz": "CBZ", ".cbr": "CBR"}
 # Ezeknél a nevű mappáknál lévő fájlokat kihagyjuk (rendszerfájlok)
 # Ha az adatkiolvasás javul, ezt növeld: a következő átvizsgálás mindent újraolvas
-EXTRACT_VERSION = 4
+EXTRACT_VERSION = 5
 SKIP_DIRS = {"@eaDir", ".AppleDouble", "#recycle", ".Trash", "$RECYCLE.BIN", ".git"}
 
 state = {
@@ -304,7 +304,8 @@ def pdf_meta(path: Path) -> dict:
         if t and len(t) > 2 and not re.search(r"\.(docx?|indd|qxd|pdf|tex)\b|^untitled|microsoft word|^\d+$", t, re.I):
             d["title"] = t
         if a and len(a) < 80 and not re.search(r"^(admin|user|owner|unknown)", a, re.I):
-            d["authors"] = [x.strip() for x in re.split(r";|&|,(?=\s*[A-ZÁÉÍÓÖŐÚÜŰ])", a) if x.strip()][:4]
+            # vesszőnél NEM vágunk ("Karinthy, Frigyes 1887-1938" egy név), csak ; & és "és" mentén
+            d["authors"] = [x.strip() for x in re.split(r";|&|\s+és\s+", a) if x.strip()][:4]
         d["has_cover"] = True
     except Exception as e:
         log.debug("PDF meta hiba %s: %s", path, e)
@@ -343,9 +344,14 @@ def extract(rel: str, path: Path, fmt: str) -> dict:
     # értelmetlen beágyazott címek kiszűrése
     if not title or len(title) < 2 or re.fullmatch(r"[\w\-]+\.(\w{2,4})", title) or norm(title) in ("unknown", "untitled"):
         title = ftitle
-    authors = [a for a in (meta.get("authors") or [])
+    authors = [clean_author(a) for a in (meta.get("authors") or [])]
+    authors = [a for a in authors
                if a and len(norm(a)) > 2 and re.search(r"[A-Za-zÀ-ž]", a) and not JUNK_AUTHOR.search(norm(a))]
-    authors = [_flip_name(a) for a in authors] or fauthors
+    if fmt not in ("EPUB", "MOBI", "AZW", "AZW3"):
+        # PDF/DOC/RTF: a "szerző" mező gyakran a gép/felhasználó neve (Asus, Rendszergazda...):
+        # egyszavas nevet ezekből nem fogadunk el
+        authors = [a for a in authors if " " in a.strip()]
+    authors = authors or fauthors
     # A beágyazott "szerző" gyakran a fordító/szkennelő: ha a mappa egy szerző nevét viseli,
     # és nincs átfedés, a mappa/fájlnév szerinti szerző nyer
     top = rel.split("/")[0] if "/" in rel else ""
@@ -371,8 +377,17 @@ def extract(rel: str, path: Path, fmt: str) -> dict:
     return meta
 
 
-JUNK_AUTHOR = re.compile(r"^(unknown|ismeretlen|verypdf|calibre|administrator|admin|user|owner|author|"
-                         r"szerzo|anonymous|abbyy|adobe|microsoft)\b|^(n a|na)$|^www |^http", re.I)
+JUNK_AUTHOR = re.compile(r"^(unknown|ismeretlen|verypdf|calibre|administrator|admin|rendszergazda|user|owner|"
+                         r"author|szerzo|anonymous|abbyy|adobe|microsoft|hp|dell|lenovo|asus|acer|pc|"
+                         r"felhasznalo|tulajdonos)\b|^(n a|na)$|^www |^http|\b(hu|com|org)$", re.I)
+
+
+def clean_author(a: str) -> str:
+    """'Arany, János 1817-1882' -> 'Arany János'; '(1835-1914)', 'szerk.' és hasonlók le."""
+    a = re.sub(r"\(?\b1[0-9]{3}\s*-\s*(1[0-9]{3}|20[0-9]{2})?\s*\)?", " ", a or "")
+    a = re.sub(r"\s+\b(1[5-9]|20)\d{2}\b\s*-?$", " ", a)
+    a = _flip_name(re.sub(r"\s{2,}", " ", a).strip(" ,;-–_."))
+    return a.strip()
 
 
 def _flip_name(a: str) -> str:
@@ -407,10 +422,13 @@ def scan():
                     found.append((p.relative_to(root).as_posix(), p, FORMATS[ext]))
         state["scan_total"] = len(found)
         with db.connect() as con:
-            known = {r["path"]: (r["size"], r["mtime"], (json.loads(r["meta"] or "{}") or {}).get("v"))
-                     for r in con.execute("SELECT path, size, mtime, meta FROM library_files")}
+            rows = con.execute("SELECT path, size, mtime, meta, authors, state, book_file_id FROM library_files").fetchall()
+            known = {r["path"]: (r["size"], r["mtime"], (json.loads(r["meta"] or "{}") or {}).get("v")) for r in rows}
+            imported = {r["path"]: (r["book_file_id"], json.loads(r["authors"] or "[]"))
+                        for r in rows if r["state"] == "imported" and r["book_file_id"]}
         seen = set()
         batch = []
+        author_fixes = []   # (book_file_id, régi szerzők, új szerzők)
         for i, (rel, p, fmt) in enumerate(found):
             seen.add(rel)
             state["scan_done"] = i + 1
@@ -422,6 +440,8 @@ def scan():
                 continue
             meta = extract(rel, p, fmt)
             meta["v"] = EXTRACT_VERSION
+            if rel in imported and [norm(a) for a in imported[rel][1]] != [norm(a) for a in meta["authors"]]:
+                author_fixes.append((imported[rel][0], imported[rel][1], meta["authors"]))
             dir_ = str(Path(rel).parent.as_posix()) if "/" in rel else ""
             batch.append((rel, dir_, Path(rel).name, fmt, st.st_size, st.st_mtime, meta["title"],
                           json.dumps(meta["authors"], ensure_ascii=False),
@@ -432,6 +452,9 @@ def scan():
                 _save_batch(batch)
                 batch = []
         _save_batch(batch)
+        if author_fixes:
+            n = apply_author_fixes(author_fixes)
+            log.info("Javított szerzők %d importált könyvnél", n)
         with db.connect() as con:
             con.execute("UPDATE library_files SET missing=0")
             missing = [r["path"] for r in con.execute("SELECT path FROM library_files") if r["path"] not in seen]
@@ -447,6 +470,43 @@ def scan():
     finally:
         state["scanning"] = False
         _scan_lock.release()
+
+
+def set_book_authors(con, book_id: int, authors: list[str]):
+    con.execute("DELETE FROM book_authors WHERE book_id=?", (book_id,))
+    seen = set()
+    for pos, name in enumerate(a.strip() for a in authors):
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        con.execute("INSERT OR IGNORE INTO authors(name) VALUES (?)", (name,))
+        aid = con.execute("SELECT id FROM authors WHERE name=?", (name,)).fetchone()[0]
+        con.execute("INSERT OR IGNORE INTO book_authors(book_id, author_id, position) VALUES (?,?,?)", (book_id, aid, pos))
+    con.execute("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM book_authors)")
+
+
+def apply_author_fixes(fixes) -> int:
+    """Javított szerzők átvezetése az importált könyvekre - CSAK ha a könyv szerzőit
+    az import óta senki nem módosította (különben a kézi javítás marad)."""
+    n = 0
+    with db.write() as con:
+        for bf_id, old, new in fixes:
+            r = con.execute("SELECT book_id FROM book_files WHERE id=?", (bf_id,)).fetchone()
+            if not r:
+                continue
+            book_id = r[0]
+            cur = [x[0] for x in con.execute(
+                "SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id=a.id WHERE ba.book_id=? "
+                "ORDER BY ba.position", (book_id,))]
+            if [norm(a) for a in cur] != [norm(a) for a in old]:
+                continue
+            set_book_authors(con, book_id, new)
+            # ha még nincs leírása, a kiegészítő az új szerzővel újra megpróbálhatja
+            con.execute("UPDATE books SET enriched_at=NULL, updated_at=datetime('now') "
+                        "WHERE id=? AND (description IS NULL OR trim(description)='')", (book_id,))
+            db.reindex_book(con, book_id)
+            n += 1
+    return n
 
 
 def _save_batch(batch):

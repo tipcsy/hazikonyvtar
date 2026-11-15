@@ -939,6 +939,61 @@ async function pollImport() {
   if (!$("#importer").classList.contains("hidden")) imp.timer = setTimeout(pollImport, busy ? 1500 : 8000);
 }
 
+/* ---------------------------------------------------------------- szerzők kezelése */
+let authorsAll = [];
+$("#authorsBtn").onclick = async () => {
+  hideSheet($("#menu"));
+  history.replaceState({ sheet: "authorsSheet" }, "");
+  $("#authorsSheet").classList.remove("hidden");
+  openStack.push($("#authorsSheet"));
+  $("#authorsFilter").value = "";
+  await loadAuthors();
+};
+async function loadAuthors() {
+  try { authorsAll = (await api("/api/authors")).items; renderAuthors(); }
+  catch (e) { toast(e.message, true); }
+}
+function renderAuthors() {
+  const q = $("#authorsFilter").value.trim().toLowerCase();
+  const list = q ? authorsAll.filter((a) => a.name.toLowerCase().includes(q)) : authorsAll;
+  $("#authorsList").innerHTML = list.map((a) => `<div class="author-row" data-id="${a.id}">
+      <span class="nm">${esc(a.name)}</span>
+      <button class="btn tiny ghost cnt" data-act="show" title="Könyvei">${a.n} 📚</button>
+      <button class="btn tiny ghost" data-act="edit" title="Átnevezés">✎</button>
+      <button class="btn tiny ghost" data-act="del" title="Törlés">🗑</button>
+    </div>`).join("") || `<p class="muted" style="padding:10px">Nincs találat.</p>`;
+}
+let authorsTimer;
+$("#authorsFilter").addEventListener("input", () => { clearTimeout(authorsTimer); authorsTimer = setTimeout(renderAuthors, 150); });
+$("#authorsList").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const row = btn.closest(".author-row");
+  const a = authorsAll.find((x) => x.id === +row.dataset.id);
+  if (btn.dataset.act === "show") {
+    closeTop(); setAuthorFilter(a.name);
+  } else if (btn.dataset.act === "del") {
+    if (!confirm(`Törlöd „${a.name}” szerzőt? ${a.n} könyvről kerül le a név (a könyvek megmaradnak).`)) return;
+    try { await api(`/api/authors/${a.id}`, { method: "DELETE" }); toast("Törölve"); await loadAuthors(); loadMeta(); search(); }
+    catch (err) { toast(err.message, true); }
+  } else if (btn.dataset.act === "edit") {
+    row.innerHTML = `<input value="${esc(a.name)}" list="dlAuthors" aria-label="Új név">
+      <button class="btn tiny primary" data-act="save">✓</button><button class="btn tiny ghost" data-act="cancel">✕</button>`;
+    const inp = $("input", row); inp.focus(); inp.select();
+    inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("[data-act=save]", row).click(); if (ev.key === "Escape") renderAuthors(); });
+  } else if (btn.dataset.act === "cancel") {
+    renderAuthors();
+  } else if (btn.dataset.act === "save") {
+    const name = $("input", row).value.trim();
+    if (!name || name === a.name) return renderAuthors();
+    try {
+      const r = await api(`/api/authors/${a.id}`, { method: "PUT", json: { name } });
+      toast(r.merged ? `Összevonva: ${name}` : "Átnevezve");
+      await loadAuthors(); loadMeta(); search();
+    } catch (err) { toast(err.message, true); }
+  }
+});
+
 /* közvetlen link egy könyvre (pl. az olvasóból vissza): /#book-12 */
 function openFromHash() {
   const m = location.hash.match(/^#book-(\d+)$/);

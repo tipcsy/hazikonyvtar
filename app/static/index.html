@@ -9,7 +9,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon.svg">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
 
@@ -106,6 +106,7 @@
   <div class="menu-card">
     <p class="muted">Bejelentkezve: <b id="whoami"></b></p>
     <button id="importBtn" class="btn ghost block hidden">📂 E-könyvek importálása a mappából <span id="importBadge" class="pill"></span></button>
+    <button id="authorsBtn" class="btn ghost block">✍ Szerzők kezelése</button>
     <button id="enrichBtn" class="btn ghost block">✨ Hiányzó leírások kitöltése <span id="enrichBadge" class="pill"></span></button>
     <p id="enrichStatus" class="muted small"></p>
     <a class="btn ghost block" href="/api/export">Mentés letöltése (JSON)</a>
@@ -263,6 +264,23 @@
   </div>
 </div>
 
+<!-- Szerzők kezelése -->
+<div id="authorsSheet" class="sheet-backdrop hidden">
+  <div class="sheet">
+    <div class="sheet-head">
+      <button class="icon-btn" data-close aria-label="Bezár">✕</button>
+      <h2>Szerzők</h2>
+      <div class="grow"></div>
+    </div>
+    <div class="sheet-body">
+      <p class="muted small">Átnevezés: ha a beírt név már létezik, a két szerzőt összevonja. Törlés: a könyvek
+        megmaradnak, csak ez a név kerül le róluk. A számra koppintva megnézheted a szerző könyveit.</p>
+      <input id="authorsFilter" type="search" placeholder="Keresés a szerzők között…">
+      <div id="authorsList" class="authors-list"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Kép nagyítás -->
 <div id="lightbox" class="lightbox hidden"><img alt=""></div>
 
@@ -276,6 +294,6 @@
 <datalist id="dlShops"></datalist>
 <datalist id="dlCurrency"><option>HUF</option><option>EUR</option><option>USD</option><option>GBP</option></datalist>
 
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>
