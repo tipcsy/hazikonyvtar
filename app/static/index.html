@@ -9,7 +9,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon.svg">
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
 
@@ -255,6 +255,16 @@
         <label class="impOwner">Kié?<input id="impOwner" list="dlOwners" value="Közös"></label>
       </div>
       <div id="impList" class="imp-list"></div>
+      <details id="exclBox" class="excl-box">
+        <summary>🚫 Kizárt mappák <small id="exclCount" class="muted"></small></summary>
+        <p class="muted small">Soronként egy mappanév (pl. <code>Fa megmunkálás</code> vagy
+          <code>Nyelvkönyvek/Spanyol</code>). Az ékezet, a kis/nagybetű és a „-- ” előtag nem számít; az almappák is
+          kimaradnak. A kizárt mappák fájljai nem jelennek meg itt, a belőlük már felvett könyvek pedig lekerülnek a
+          listáról (a papíron is meglévők maradnak). Sort törölve a mappa újra importálható lesz.</p>
+        <textarea id="exclText" rows="6" placeholder="Fa megmunkálás&#10;Filofax"></textarea>
+        <div class="form-foot"><span id="exclMsg" class="muted small"></span><div class="grow"></div>
+          <button id="exclSave" class="btn small primary">Mentés</button></div>
+      </details>
     </div>
     <div class="imp-foot">
       <span id="impSel" class="muted small">0 kijelölve</span>
@@ -295,6 +305,6 @@
 <datalist id="dlShops"></datalist>
 <datalist id="dlCurrency"><option>HUF</option><option>EUR</option><option>USD</option><option>GBP</option></datalist>
 
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

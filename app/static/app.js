@@ -786,7 +786,32 @@ $("#importBtn").onclick = () => {
   pollImport();
 };
 
+/* kizárt mappák */
+let exclItems = [];
+async function loadExclusions() {
+  try {
+    exclItems = (await api("/api/library/exclusions")).items;
+    $("#exclText").value = exclItems.join("\n");
+    $("#exclCount").textContent = exclItems.length ? `(${exclItems.length})` : "";
+  } catch { /* */ }
+}
+async function saveExclusions(items) {
+  items = [...new Set(items.map((s) => s.trim()).filter(Boolean))];
+  try {
+    const pre = await api("/api/library/exclusions", { method: "PUT", json: { items, dry_run: true } });
+    if (pre.books && !confirm(`A kizárás ${pre.files} fájlt érint. ${pre.books} már felvett könyv lekerül a listáról ` +
+      `(a papíron is meglévők maradnak; a mappához nem nyúlok). Folytatod?`)) return;
+    await api("/api/library/exclusions", { method: "PUT", json: { items } });
+    toast("Kizárások mentve – átvizsgálás indul");
+    await loadExclusions();
+    $("#exclMsg").textContent = `${pre.files} fájl kizárva.`;
+    pollImport();
+  } catch (e) { toast(e.message, true); }
+}
+$("#exclSave").onclick = () => saveExclusions($("#exclText").value.split("\n"));
+
 async function loadImport() {
+  loadExclusions();
   $("#impList").innerHTML = `<p class="muted">Betöltés…</p>`;
   try {
     const r = await api("/api/library/groups?which=" + imp.which);
@@ -814,7 +839,8 @@ function renderImport() {
       const all = gs.every((g) => imp.sel.has(g.key));
       return `<details class="imp-dir" data-dir="${esc(dir)}" ${open ? "open" : ""}>
         <summary><input type="checkbox" data-seldir ${all ? "checked" : ""} aria-label="Mappa kijelölése">
-          <span class="path">📁 ${esc(dir || "(gyökér)")}</span><span class="n">${gs.length} könyv</span></summary>
+          <span class="path">📁 ${esc(dir || "(gyökér)")}</span><span class="n">${gs.length} könyv</span>
+          <button type="button" class="btn tiny ghost" data-excl="${esc(dir)}" title="Mappa kizárása">🚫</button></summary>
         <div class="rows">${open ? gs.map(impRowHtml).join("") : ""}</div></details>`;
     }).join("");
   }
@@ -852,6 +878,17 @@ $("#impList").addEventListener("toggle", (e) => {
   }
 }, true);
 $("#impList").addEventListener("click", (e) => {
+  const ex = e.target.closest("[data-excl]");
+  if (ex) {
+    e.preventDefault(); e.stopPropagation();
+    const dir = ex.dataset.excl;
+    const top = dir.split("/")[0];
+    // a "-- Kategória" főmappát javasoljuk, ha az alatt van (pl. Fa megmunkálás/Wood Magazine -> Fa megmunkálás)
+    const suggestion = (top.startsWith("--") && top !== dir) ? top.replace(/^-+\s*/, "") : dir.replace(/^-+\s*/, "");
+    const name = prompt("Melyik mappát zárjam ki? (az almappái is kimaradnak)", suggestion);
+    if (name && name.trim()) saveExclusions([...exclItems, name.trim()]);
+    return;
+  }
   const cb = e.target.closest("[data-seldir]");
   if (cb) {
     e.stopPropagation();

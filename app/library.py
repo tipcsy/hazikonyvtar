@@ -412,9 +412,14 @@ def scan(force_missing: bool = False):
     state.update(scanning=True, scan_done=0, scan_total=0, scan_error=None)
     try:
         root = db.LIBRARY_DIR
+        rules = exclusion_rules()
         found: list[tuple[str, Path, str]] = []
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+            rel_dir = Path(dirpath).relative_to(root).as_posix()
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")
+                           and not is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d, rules)]
+            if rel_dir != "." and is_excluded(rel_dir, rules):
+                continue
             for fn in filenames:
                 ext = os.path.splitext(fn)[1].lower()
                 if ext in FORMATS and not fn.startswith("._"):
@@ -469,6 +474,32 @@ def scan(force_missing: bool = False):
 MAX_MISSING_RATIO = 0.2   # ennél több eltűnt fájlnál (pl. nem elérhető megosztás) nem törlünk semmit
 
 
+# ------------------------------------------------------------------ kizárt mappák
+
+def exclusion_rules() -> list[list[str]]:
+    """A kizárt mappák (soronként egy) normalizált útvonal-darabokra bontva."""
+    out = []
+    for line in db.get_setting("excluded_dirs", []) or []:
+        segs = [norm(s) for s in str(line).strip().strip("/").split("/") if norm(s)]
+        if segs:
+            out.append(segs)
+    return out
+
+
+def is_excluded(rel_path: str, rules: list[list[str]] | None = None) -> bool:
+    """Igaz, ha az útvonal bármelyik része egy kizárt mappa (a '-- ' előtag és ékezetek nem számítanak).
+    Pl. 'Fa megmunkálás' kizárja a '-- Fa megmunkálás/...' alatti összes fájlt."""
+    rules = exclusion_rules() if rules is None else rules
+    if not rules:
+        return False
+    segs = [norm(s) for s in rel_path.split("/")]
+    for r in rules:
+        for i in range(len(segs) - len(r) + 1):
+            if segs[i:i + len(r)] == r:
+                return True
+    return False
+
+
 def handle_missing(seen: set[str], force: bool = False):
     """A mappából eltűnt fájlok kezelése.
     - Áthelyezett/átnevezett fájl (azonos név+méret, vagy azonos méret+mappa): a könyv átkerül az új útvonalra.
@@ -487,13 +518,20 @@ def handle_missing(seen: set[str], force: bool = False):
         if not gone_imported:
             con.execute("UPDATE library_files SET missing=0")
             return
-        if not seen or (not force and len(gone_imported) > max(5, imported_total * MAX_MISSING_RATIO)):
+        # kizárt mappából származó könyvek: szándékos, mindig lekerülnek (a fék nem vonatkozik rájuk)
+        rules = exclusion_rules()
+        excluded = [r for r in gone_imported if is_excluded(r["path"], rules)]
+        gone_imported = [r for r in gone_imported if not is_excluded(r["path"], rules)]
+        to_remove = list(excluded)
+        braked = bool(gone_imported) and (not seen or (
+            not force and len(gone_imported) > max(5, imported_total * MAX_MISSING_RATIO)))
+        if braked:
             for r in gone_imported:
                 con.execute("UPDATE library_files SET missing=1 WHERE id=?", (r["id"],))
             state["scan_error"] = (f"{len(gone_imported)} importált fájl nem található - a megosztás talán nem "
                                    f"elérhető, ezért nem töröltem semmit. Ha szándékosan törölted őket, nyomd meg a Törlés jóváhagyása gombot.")
             log.warning(state["scan_error"])
-            return
+            gone_imported = []
         # áthelyezés/átnevezés: új (még nem importált) fájl azonos névvel+mérettel, vagy azonos mérettel ugyanott
         fresh = [r for r in rows if r["path"] in seen and r["state"] == "new"]
         for r in gone_imported:
@@ -511,7 +549,8 @@ def handle_missing(seen: set[str], force: bool = False):
                 con.execute("DELETE FROM library_files WHERE id=?", (r["id"],))
                 log.info("Áthelyezett fájl: %s -> %s", r["path"], match["path"])
                 continue
-            # tényleg törölték
+            to_remove.append(r)   # tényleg törölték
+        for r in to_remove:
             con.execute("DELETE FROM library_files WHERE id=?", (r["id"],))
             bf = con.execute("SELECT book_id FROM book_files WHERE id=?", (r["book_file_id"],)).fetchone()
             if not bf:
@@ -538,7 +577,8 @@ def handle_missing(seen: set[str], force: bool = False):
                 db.reindex_book(con, book_id)
         con.execute("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM book_authors)")
         con.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM book_tags)")
-        con.execute("UPDATE library_files SET missing=0")
+        if not braked:
+            con.execute("UPDATE library_files SET missing=0")
     if removed_books:
         log.info("A mappából törölt fájlok miatt %d könyv lekerült a listáról", removed_books)
 
@@ -596,6 +636,25 @@ def _save_batch(batch):
 
 def start_scan(force_missing: bool = False):
     threading.Thread(target=scan, kwargs={"force_missing": force_missing}, daemon=True).start()
+
+
+def exclusion_preview(lines: list[str]) -> dict:
+    """Mit érintene a megadott kizárási lista: hány fájl és hány már felvett könyv."""
+    rules = []
+    for line in lines:
+        segs = [norm(s) for s in str(line).strip().strip("/").split("/") if norm(s)]
+        if segs:
+            rules.append(segs)
+    with db.connect() as con:
+        rows = con.execute("SELECT path, state, book_file_id FROM library_files").fetchall()
+        hit = [r for r in rows if is_excluded(r["path"], rules)]
+        bf = [r["book_file_id"] for r in hit if r["state"] == "imported" and r["book_file_id"]]
+        books = set()
+        for i in range(0, len(bf), 500):
+            chunk = bf[i:i + 500]
+            books |= {x[0] for x in con.execute(
+                f"SELECT book_id FROM book_files WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
+    return {"files": len(hit), "books": len(books)}
 
 
 def counts() -> dict:

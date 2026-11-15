@@ -343,3 +343,10 @@ legend { color: var(--muted); font-size: .85rem; padding: 0 6px; }
 .author-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .author-row .cnt { color: var(--accent); font-size: .85rem; min-width: 34px; text-align: right; }
 .author-row input { flex: 1; padding: 5px 8px; }
+
+/* kizárt mappák */
+.excl-box { margin-top: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.excl-box summary { cursor: pointer; font-weight: 600; }
+.excl-box textarea { margin-top: 6px; font-family: ui-monospace, Consolas, monospace; font-size: .9rem; }
+.excl-box code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.imp-dir > summary [data-excl] { margin-left: 4px; flex: none; }

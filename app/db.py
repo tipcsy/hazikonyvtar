@@ -139,7 +139,27 @@ CREATE TABLE IF NOT EXISTS library_files (
     scanned_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_libfiles_state ON library_files(state);
+
+-- egyszerű beállítások (pl. kizárt mappák listája)
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
+
+
+def get_setting(key: str, default=None):
+    import json
+    with connect() as con:
+        r = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return json.loads(r[0]) if r and r[0] is not None else default
+
+
+def set_setting(key: str, value):
+    import json
+    with connect() as con:
+        con.execute("INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, json.dumps(value, ensure_ascii=False)))
 
 
 def _migrate(con):

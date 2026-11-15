@@ -861,6 +861,28 @@ def library_scan(force_missing: int = 0, user: str = Depends(current_user)):
     return {"ok": True}
 
 
+class ExclusionsIn(BaseModel):
+    items: list[str]
+    dry_run: bool = False
+
+
+@app.get("/api/library/exclusions")
+def get_exclusions(user: str = Depends(current_user)):
+    return {"items": db.get_setting("excluded_dirs", []) or []}
+
+
+@app.put("/api/library/exclusions")
+def set_exclusions(data: ExclusionsIn, user: str = Depends(current_user)):
+    """Kizárt mappák (soronként egy). dry_run=true: csak megmondja, mit érintene."""
+    items = list(dict.fromkeys(s.strip().strip("/") for s in data.items if s.strip().strip("/")))
+    preview = library.exclusion_preview(items)
+    if not data.dry_run:
+        db.set_setting("excluded_dirs", items)
+        if library.enabled():
+            library.start_scan()
+    return {"items": items, **preview}
+
+
 @app.get("/api/library/groups")
 def library_groups(which: str = "new", user: str = Depends(current_user)):
     if which not in ("new", "ignored"):
